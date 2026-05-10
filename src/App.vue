@@ -27,14 +27,6 @@
         >
           {{ demoButtonText }}
         </button>
-        <button
-          type="button"
-          class="secondary-button"
-          :disabled="finishingInterview || testModeRunning || recordingStatus === 'recording' || recordingStatus === 'finalizing'"
-          @click="generateInstantDemoReport"
-        >
-          生成演示报告
-        </button>
         <button type="button" class="danger-button" :disabled="!canFinishInterview" @click="finishInterview">
           {{ finishButtonText }}
         </button>
@@ -152,11 +144,10 @@ const finishButtonText = computed(() => {
   return '生成报告'
 })
 const canFinishInterview = computed(() => {
-  if (finishingInterview.value || recordingStatus.value === 'finalizing' || testModeRunning.value) return false
+  if (finishingInterview.value || recordingStatus.value === 'finalizing') return false
   return hasStartedInterview.value && ['idle', 'recording', 'stopped'].includes(recordingStatus.value)
 })
 const sessionSubtitle = computed(() => {
-  if (testModeRunning.value) return '测试演示中'
   if (recordingStatus.value === 'recording') return '实时面试中'
   if (recordingStatus.value === 'finalizing') return '报告生成中'
   return '等待开始'
@@ -185,7 +176,7 @@ const workflowProgress = computed(() => {
       visible: true,
       step: 'transcript',
       percent: hasSpeech ? 30 : 18,
-      title: testModeRunning.value ? '模拟转写中' : hasSpeech ? '实时转写中' : '录音监听中',
+      title: hasSpeech ? '实时转写中' : '录音监听中',
       detail: hasSpeech
         ? '正在把当前语音片段写入左侧转写记录。'
         : '正在保持全程收音，等待下一段有效语音。'
@@ -347,40 +338,6 @@ async function finishInterview() {
   }
 }
 
-async function generateInstantDemoReport() {
-  if (finishingInterview.value || testModeRunning.value || recordingStatus.value === 'recording') return
-  finishingInterview.value = true
-  const previousResume = loadedResume.value
-  try {
-    stopDemoInterview()
-    setReportProgress('transcript', 35, '生成模拟转写', '正在基于真实简历生成演示问答和候选人回答。')
-    const demoSession = buildInstantDemoSession(previousResume)
-    loadDemoSessionToUi(demoSession)
-    setReportProgress('analysis', 64, '生成模拟AI评价', '正在整理演示用阶段评价、存疑点和追问建议。')
-    await wait(500)
-    setReportProgress('report', 84, '演示报告归档中', '正在生成演示模式 PDF 和 TXT 文件。')
-    const report = await saveFinalReport(demoSession.snapshot)
-    setReportProgress('done', 100, '演示报告已生成', '测试报告已保存，可用于后续企业微信推送演示。')
-    persistCompletedSession(demoSession.snapshot, report)
-    const savedFiles = [
-      '报告类型：演示模式',
-      report.folder_path ? `保存目录：${report.folder_path}` : '',
-      `PDF报告：${report.pdf_path}`,
-      report.transcript_path ? `角色转写文本：${report.transcript_path}` : '',
-      report.realtime_transcript_path ? `实时原始转写：${report.realtime_transcript_path}` : ''
-    ].filter(Boolean).join('\n')
-    window.alert(`演示报告已生成：\n${savedFiles}`)
-  } catch (error) {
-    recordingStatus.value = 'stopped'
-    setReportProgress('report', 100, '演示报告生成失败', error.message || '请稍后重试。')
-    asrStatus.value = `演示报告生成失败：${error.message}`
-    console.error('[DemoReport] 生成失败:', error)
-  } finally {
-    finishingInterview.value = false
-    loadedResume.value = previousResume
-  }
-}
-
 function resetInterview() {
   stopDemoInterview()
   clearReportProgress()
@@ -511,15 +468,9 @@ function startDemoInterview() {
   currentSessionDemo.value = true
   testModeRunning.value = true
   recordingStatus.value = 'recording'
-  asrStatus.value = '测试模式：模拟音频输入'
+  asrStatus.value = '录音中'
   vadStatus.value = '等待说话'
   semanticStatus.value = '等待触发'
-  messages.value.push({
-    id: makeDemoId('system'),
-    type: 'system',
-    content: '测试模式已启动：当前不会调用麦克风，会模拟面试官和候选人的实时语音转写、AI分析与追问。',
-    time: formatClock()
-  })
   persistSession()
   runDemoScript()
 }
@@ -551,12 +502,6 @@ function runDemoScript() {
     semanticStatus.value = '等待触发'
     partialText.value = ''
     currentText.value = ''
-    messages.value.push({
-      id: makeDemoId('system'),
-      type: 'system',
-      content: '测试演示已完成，可以点击“生成报告”查看完整报告流程。',
-      time: formatClock()
-    })
     persistSession({ endedAt: Date.now() })
   })
 }
@@ -568,12 +513,7 @@ function buildInstantDemoSession(resume = loadedResume.value, options = {}) {
   const demoSessionId = options.sessionId || `demo-report-${createdAt}`
   const demoFinals = []
   const demoAnalyses = []
-  const demoMessages = [{
-    id: makeDemoId('system'),
-    type: 'system',
-    content: '演示模式：本报告基于真实简历和模拟面试问答生成，用于流程演示。',
-    time: formatClock(createdAt)
-  }]
+  const demoMessages = []
 
   turns.forEach((turn, index) => {
     const questionTime = formatClock(createdAt + index * 90000)
@@ -622,7 +562,7 @@ function buildInstantDemoSession(resume = loadedResume.value, options = {}) {
     analyses: demoAnalyses,
     recordingStatus: 'stopped',
     updatedAt: Date.now(),
-    reportType: '演示模式'
+    reportType: '测试报告'
   }
   return {
     snapshot,
@@ -639,9 +579,9 @@ function loadDemoSessionToUi(demoSession) {
   currentSessionDemo.value = true
   hasStartedInterview.value = true
   recordingStatus.value = 'stopped'
-  asrStatus.value = '演示报告已生成'
-  vadStatus.value = '测试模式'
-  semanticStatus.value = '模拟问答完成'
+  asrStatus.value = '报告已生成'
+  vadStatus.value = '等待录音'
+  semanticStatus.value = '整理完成'
   partialText.value = ''
   currentText.value = ''
   finals.value = snapshot.finals
@@ -662,7 +602,7 @@ function createDemoFinalEntry({ id, text, speaker, label, time }) {
     roleStatus: 'classified',
     roleSource: 'demo',
     roleConfidence: 1,
-    roleReason: '测试模式预置角色',
+    roleReason: '预置角色',
     time,
     pending: false
   }
@@ -854,7 +794,7 @@ function scheduleDemoSpeech({ delay, speaker, label, text, onDone }) {
       roleStatus: 'classified',
       roleSource: 'demo',
       roleConfidence: 1,
-      roleReason: '测试模式预置角色',
+      roleReason: '预置角色',
       time: formatClock(),
       pending: false
     }
