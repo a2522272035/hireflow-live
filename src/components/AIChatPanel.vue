@@ -12,16 +12,6 @@
     </header>
 
     <div class="ai-workbench" :class="{ loading }">
-      <div class="thinking-pipeline">
-        <span
-          v-for="(step, index) in thinkingSteps"
-          :key="step"
-          :style="{ '--step-delay': `${index * 0.18}s` }"
-        >
-          {{ step }}
-        </span>
-      </div>
-
       <div v-if="resumeTags.length" class="resume-hit-strip">
         <strong>简历命中</strong>
         <span v-for="tag in resumeTags" :key="tag">{{ tag }}</span>
@@ -99,7 +89,6 @@ const props = defineProps({
 defineEmits(['ask-question'])
 
 const messageListRef = ref(null)
-const thinkingSteps = ['提取关键词', '匹配简历', '风险核验', '生成追问']
 
 const resumeTags = computed(() => {
   const resume = props.resume && typeof props.resume === 'object' ? props.resume : {}
@@ -218,37 +207,9 @@ watch(
   padding: 8px;
 }
 
-.thinking-pipeline,
 .resume-hit-strip,
 .ai-metrics {
   position: relative;
-}
-
-.thinking-pipeline {
-  display: grid;
-  gap: 6px;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-}
-
-.thinking-pipeline span {
-  align-items: center;
-  background: #fff;
-  border: 1px solid #e2e8f0;
-  border-radius: 8px;
-  color: #64748b;
-  display: inline-flex;
-  font-size: 11px;
-  font-weight: 800;
-  justify-content: center;
-  line-height: 1.25;
-  min-height: 26px;
-  padding: 5px 6px;
-  text-align: center;
-}
-
-.ai-workbench.loading .thinking-pipeline span {
-  border-color: #bfdbfe;
-  color: #1d4ed8;
 }
 
 .resume-hit-strip {
@@ -257,7 +218,6 @@ watch(
   flex-wrap: wrap;
   gap: 7px;
   max-height: 26px;
-  margin-top: 8px;
   overflow: hidden;
 }
 
@@ -387,10 +347,6 @@ watch(
 }
 
 @media (max-width: 720px) {
-  .thinking-pipeline {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
   .metric-row {
     grid-template-columns: 68px 1fr 30px;
   }

@@ -794,10 +794,83 @@ function hideTermCard() {
   termCard.value.loading = false
 }
 
+const termGlossary = [
+  {
+    pattern: /mysql/i,
+    text: 'MySQL 是一种常见的关系型数据库，用来存储和查询结构化数据，比如用户、订单、财务记录、商品信息。实际工作里通常会用 SQL 写查询、建表、做索引优化、处理事务和备份恢复。面试可追问：你最近一次用 MySQL 解决了什么业务问题？'
+  },
+  {
+    pattern: /\bsql\b|结构化查询语言/i,
+    text: 'SQL 是操作关系型数据库的查询语言，用来新增、查询、更新、删除数据，也能做统计汇总和多表关联。它常用于报表、数据核对、后台管理和业务分析。面试可追问：你会写到什么复杂度的 SQL，是否做过联表、分组统计或性能优化？'
+  },
+  {
+    pattern: /redis/i,
+    text: 'Redis 是一种内存型数据存储工具，特点是读写速度快，常用于缓存、验证码、登录状态、排行榜、消息队列等场景。它体现候选人对高并发和性能优化的理解。面试可追问：你用 Redis 存过什么数据，如何处理过期和一致性？'
+  },
+  {
+    pattern: /oracle/i,
+    text: 'Oracle 是企业级关系型数据库，常见于金融、政企、制造等对稳定性和权限控制要求较高的系统。它用于存储核心业务数据、财务数据和复杂事务。面试可追问：你主要负责查询、维护、性能调优，还是业务数据核对？'
+  },
+  {
+    pattern: /mongodb/i,
+    text: 'MongoDB 是文档型数据库，数据以类似 JSON 的文档保存，适合字段变化较多、结构不固定的业务，比如内容、日志、配置、画像数据。面试可追问：你为什么选择 MongoDB，而不是 MySQL 这类关系型数据库？'
+  },
+  {
+    pattern: /python/i,
+    text: 'Python 是一种通用编程语言，语法简洁，常用于数据处理、自动化脚本、接口服务、爬虫、AI 和报表生成。简历里出现 Python，通常说明候选人可能具备自动化或数据分析能力。面试可追问：你用 Python 写过什么可复用工具？'
+  },
+  {
+    pattern: /java(?!script)/i,
+    text: 'Java 是企业后端开发常用语言，适合构建稳定的业务系统、接口服务、后台管理和中大型应用。它常和 Spring Boot、数据库、缓存、消息队列一起使用。面试可追问：你负责过哪些后端模块，是否处理过性能或并发问题？'
+  },
+  {
+    pattern: /javascript|typescript|前端脚本/i,
+    text: 'JavaScript/TypeScript 是前端开发核心语言，用来实现网页交互、数据展示、表单校验和前后端通信。TypeScript 在 JavaScript 基础上增加类型约束，适合大型项目。面试可追问：你做过哪些复杂交互或组件封装？'
+  },
+  {
+    pattern: /\bvue\b|vue\.js/i,
+    text: 'Vue 是前端框架，用来构建页面组件、管理界面状态和实现单页应用。它常用于后台系统、数据看板、业务表单和中台页面。面试可追问：你是否独立封装过组件、处理过状态管理或性能问题？'
+  },
+  {
+    pattern: /react/i,
+    text: 'React 是前端框架，用组件方式构建用户界面，常用于中后台系统、官网、移动端 H5 和复杂交互页面。它强调状态驱动视图。面试可追问：你如何拆分组件，如何处理状态、性能和接口数据？'
+  },
+  {
+    pattern: /spring\s*boot|springboot/i,
+    text: 'Spring Boot 是 Java 后端框架，用来快速开发接口服务、业务系统和微服务。它能整合数据库、缓存、权限、定时任务等能力。面试可追问：你做过哪些接口模块，是否参与过权限、事务或异常处理设计？'
+  },
+  {
+    pattern: /linux/i,
+    text: 'Linux 是服务器常用操作系统，后端服务、数据库和部署环境大多运行在 Linux 上。相关能力通常包括命令行操作、日志排查、服务启动、权限和脚本。面试可追问：你是否独立排查过线上日志或部署过服务？'
+  },
+  {
+    pattern: /docker/i,
+    text: 'Docker 是容器化工具，可以把应用和运行环境打包在一起，方便部署、迁移和隔离。常用于开发测试环境、服务部署和持续集成。面试可追问：你是否写过 Dockerfile，是否处理过镜像、端口、挂载和日志问题？'
+  },
+  {
+    pattern: /kubernetes|k8s/i,
+    text: 'Kubernetes/K8s 是容器编排平台，用来管理大量容器服务的部署、扩容、重启、服务发现和配置。它偏运维和云原生方向。面试可追问：你是使用者还是维护者，负责过发布、扩容还是故障排查？'
+  },
+  {
+    pattern: /\bgit\b|github|gitlab/i,
+    text: 'Git 是代码版本管理工具，用来记录代码变更、多人协作、分支开发和回滚历史。GitHub/GitLab 是常见代码托管平台。面试可追问：你在团队里如何使用分支、合并请求和代码评审？'
+  },
+  {
+    pattern: /excel|透视表|vlookup|函数/i,
+    text: 'Excel 是办公和数据处理工具，常用于台账、统计、报表、核对和简单分析。熟练使用通常包括函数、透视表、数据校验、条件格式和图表。面试可追问：你是否做过自动化模板或复杂数据核对？'
+  },
+  {
+    pattern: /power\s*bi|tableau|数据看板/i,
+    text: 'Power BI/Tableau 是数据可视化和商业分析工具，用来把业务数据做成图表、看板和经营分析报表。它体现数据理解和指标表达能力。面试可追问：你做过哪些指标看板，数据来源和口径如何确定？'
+  }
+]
+
 function localTermExplanation(term, category = '', context = '') {
   const text = String(term || '')
   const categoryText = String(category || '')
   const contextText = String(context || '')
+  const glossaryHit = termGlossary.find((item) => item.pattern.test(text))
+  if (glossaryHit) return glossaryHit.text
   const rules = [
     [/总账|总账会计/, '负责企业整体账务核算、凭证审核、月结年结、报表出具等工作。面试时可追问是否独立负责过月结、报表和账务调整。'],
     [/税务|纳税|报税|汇算|税控/, '与企业税费申报、税务合规、发票管理和年度汇算清缴有关。可追问申报税种、异常处理和税务风险控制经验。'],
@@ -815,9 +888,9 @@ function localTermExplanation(term, category = '', context = '') {
   ]
   const matched = rules.find(([pattern]) => pattern.test(text) || pattern.test(categoryText) || pattern.test(contextText))
   if (matched) return matched[1]
-  if (categoryText.includes('技能')) return `“${text}”是简历中识别出的技能标签，可用于判断候选人的经验方向。建议追问其最近一次实际使用场景、负责程度和结果。`
+  if (categoryText.includes('技能')) return `“${text}”是简历中的技能词。当前本地词典暂未收录它的固定科普解释，可以点击“继续问 AI”生成更具体说明。面试时先确认它是什么工具/方法、用来解决什么问题、候选人是否真的上手做过。`
   if (categoryText.includes('职业') || categoryText.includes('职位') || categoryText.includes('职能')) return `“${text}”是职业/职能相关标签，用于判断候选人与目标岗位的匹配度。建议追问职责边界、汇报对象和关键成果。`
-  return `“${text}”是 ResumeSDK 解析出的简历标签。当前先给出通用解释：它用于辅助理解候选人的背景、能力或风险点，可继续让 AI 结合完整简历生成更具体说明。`
+  return `“${text}”是简历解析出的标签。当前本地词典暂未收录它的固定科普解释，可以点击“继续问 AI”让模型解释它是什么、通常用来做什么，以及和当前岗位有什么关系。`
 }
 
 async function askAiForTerm() {
