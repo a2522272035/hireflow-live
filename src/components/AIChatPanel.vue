@@ -178,6 +178,7 @@ watch(
 <style scoped>
 .ai-panel {
   min-height: 0;
+  overflow: hidden;
 }
 
 .ai-status {
@@ -212,8 +213,9 @@ watch(
   background: #f8fafc;
   border: 1px solid #dce8f8;
   border-radius: 10px;
-  margin-bottom: 14px;
-  padding: 12px;
+  flex: 0 0 auto;
+  margin-bottom: 8px;
+  padding: 8px;
 }
 
 .thinking-pipeline,
@@ -224,7 +226,7 @@ watch(
 
 .thinking-pipeline {
   display: grid;
-  gap: 8px;
+  gap: 6px;
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
@@ -235,11 +237,12 @@ watch(
   border-radius: 8px;
   color: #64748b;
   display: inline-flex;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 800;
   justify-content: center;
-  min-height: 30px;
-  padding: 6px 8px;
+  line-height: 1.25;
+  min-height: 26px;
+  padding: 5px 6px;
   text-align: center;
 }
 
@@ -253,12 +256,15 @@ watch(
   display: flex;
   flex-wrap: wrap;
   gap: 7px;
-  margin-top: 10px;
+  max-height: 26px;
+  margin-top: 8px;
+  overflow: hidden;
 }
 
 .resume-hit-strip strong {
   color: #475569;
-  font-size: 12px;
+  flex: 0 0 auto;
+  font-size: 11px;
   font-weight: 900;
 }
 
@@ -267,29 +273,36 @@ watch(
   border: 1px solid #bbf7d0;
   border-radius: 999px;
   color: #047857;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 800;
-  padding: 4px 8px;
+  max-width: 130px;
+  overflow: hidden;
+  padding: 3px 7px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .ai-metrics {
   display: grid;
   gap: 8px;
-  margin-top: 11px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-top: 8px;
 }
 
 .metric-row {
   align-items: center;
   display: grid;
-  gap: 9px;
-  grid-template-columns: 74px 1fr 34px;
+  gap: 6px;
+  grid-template-columns: 64px 1fr 28px;
+  min-width: 0;
 }
 
 .metric-row span,
 .metric-row strong {
   color: #475569;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 800;
+  min-width: 0;
 }
 
 .metric-row strong {
@@ -315,18 +328,18 @@ watch(
 
 .message-list {
   display: flex;
-  flex: 1;
+  flex: 1 1 120px;
   flex-direction: column;
-  gap: 12px;
-  min-height: 320px;
+  gap: 8px;
+  min-height: 0;
   overflow: auto;
-  padding: 6px 4px 16px;
+  padding: 4px 4px 8px;
 }
 
 .chat-message {
   border: 1px solid #e7ebf2;
   border-radius: 8px;
-  padding: 13px 14px;
+  padding: 9px 10px;
 }
 
 .chat-message.ai {
@@ -343,7 +356,7 @@ watch(
   align-items: center;
   color: #7b8497;
   display: flex;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 700;
   justify-content: space-between;
   margin-bottom: 6px;
@@ -351,9 +364,10 @@ watch(
 
 .chat-message p {
   color: #1f2937;
-  font-size: 14px;
-  line-height: 1.7;
+  font-size: 13px;
+  line-height: 1.55;
   margin: 0;
+  overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
 
@@ -379,6 +393,10 @@ watch(
 
   .metric-row {
     grid-template-columns: 68px 1fr 30px;
+  }
+
+  .ai-metrics {
+    grid-template-columns: 1fr;
   }
 }
 </style>

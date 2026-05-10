@@ -229,9 +229,9 @@ watch(
 
 .status-strip {
   display: grid;
-  gap: 10px;
+  gap: 8px;
   grid-template-columns: repeat(4, 1fr);
-  margin-bottom: 16px;
+  margin-bottom: 10px;
 }
 
 .mode-switch {
@@ -241,8 +241,8 @@ watch(
   border-radius: 10px;
   display: flex;
   gap: 8px;
-  margin-bottom: 16px;
-  padding: 8px 14px;
+  margin-bottom: 10px;
+  padding: 6px 10px;
 }
 
 .mode-label {
@@ -260,7 +260,7 @@ watch(
   cursor: pointer;
   font-size: 13px;
   font-weight: 600;
-  padding: 5px 14px;
+  padding: 5px 10px;
   transition: all 0.2s;
 }
 
@@ -279,7 +279,8 @@ watch(
   background: #f8fafc;
   border: 1px solid #e8edf5;
   border-radius: 8px;
-  padding: 11px 12px;
+  min-width: 0;
+  padding: 8px 9px;
   transition: background-color 0.3s ease, border-color 0.3s ease;
 }
 
@@ -292,7 +293,10 @@ watch(
 
 .status-item strong {
   color: #1f2937;
-  font-size: 14px;
+  display: block;
+  font-size: 13px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
 }
 
 .status-item strong.recording {
@@ -340,10 +344,10 @@ watch(
   display: grid;
   gap: 14px;
   grid-template-columns: minmax(170px, 210px) minmax(0, 1fr);
-  margin-bottom: 16px;
-  min-height: 78px;
+  margin-bottom: 10px;
+  min-height: 68px;
   overflow: visible;
-  padding: 14px 16px;
+  padding: 10px 12px;
 }
 
 .visualizer-copy,
@@ -373,7 +377,7 @@ watch(
   align-items: center;
   display: flex;
   gap: 5px;
-  height: 48px;
+  height: 42px;
   justify-content: space-between;
   min-width: 0;
   overflow: visible;
@@ -428,9 +432,9 @@ watch(
   border-bottom: 1px solid #edf0f6;
   border-top: 1px solid #edf0f6;
   flex: 1;
-  min-height: 360px;
+  min-height: 0;
   overflow: auto;
-  padding: 18px 4px;
+  padding: 12px 4px;
 }
 
 .final-line {
@@ -447,10 +451,11 @@ watch(
 
 .final-line p {
   color: #111827;
-  font-size: 17px;
+  font-size: 16px;
   font-weight: 650;
-  line-height: 1.75;
+  line-height: 1.65;
   margin: 0;
+  overflow-wrap: anywhere;
 }
 
 .speaker-tag {

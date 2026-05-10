@@ -29,23 +29,27 @@ defineProps({
 <style scoped>
 .doubts-list {
   border-top: 1px solid #edf0f6;
-  padding-top: 16px;
-  margin-bottom: 16px;
+  flex: 0 1 auto;
+  margin-bottom: 8px;
+  max-height: 118px;
+  min-height: 0;
+  overflow: auto;
+  padding-top: 10px;
 }
 
 .doubts-head {
   align-items: center;
   color: #f59e0b;
   display: flex;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 700;
   justify-content: space-between;
-  margin-bottom: 10px;
+  margin-bottom: 8px;
 }
 
 .doubts-grid {
   display: grid;
-  gap: 10px;
+  gap: 8px;
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
@@ -54,11 +58,12 @@ defineProps({
   border: 1px solid #fde68a;
   border-radius: 8px;
   color: #92400e;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 650;
-  line-height: 1.45;
-  min-height: 42px;
-  padding: 10px 14px;
+  line-height: 1.4;
+  min-height: 36px;
+  min-width: 0;
+  padding: 8px 10px;
   display: flex;
   gap: 8px;
   align-items: flex-start;
@@ -80,6 +85,8 @@ defineProps({
 
 .doubt-text {
   flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 @media (max-width: 720px) {

@@ -37,8 +37,9 @@ defineEmits(['select'])
 <style scoped>
 .question-list {
   border-top: 1px solid #edf0f6;
-  padding-top: 16px;
-  max-height: 200px;
+  flex: 0 0 auto;
+  padding-top: 10px;
+  max-height: 112px;
   overflow-y: auto;
 }
 
@@ -46,10 +47,10 @@ defineEmits(['select'])
   align-items: center;
   color: #4653ff;
   display: flex;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 700;
   justify-content: space-between;
-  margin-bottom: 10px;
+  margin-bottom: 8px;
 }
 
 .question-head small {
@@ -59,7 +60,7 @@ defineEmits(['select'])
 
 .question-grid {
   display: grid;
-  gap: 10px;
+  gap: 8px;
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
@@ -69,11 +70,13 @@ defineEmits(['select'])
   border-radius: 8px;
   color: #15734a;
   cursor: pointer;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 650;
-  line-height: 1.45;
-  min-height: 42px;
-  padding: 10px 14px;
+  line-height: 1.35;
+  min-height: 34px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  padding: 8px 10px;
   text-align: left;
   transition: border-color 0.16s ease, box-shadow 0.16s ease, transform 0.16s ease;
 }

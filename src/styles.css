@@ -13,6 +13,7 @@ body {
   color: #172033;
   font-family: Inter, "Microsoft YaHei", "PingFang SC", Arial, sans-serif;
   margin: 0;
+  overflow: hidden;
 }
 
 button,
@@ -23,10 +24,11 @@ input {
 .app-shell {
   display: flex;
   flex-direction: column;
-  gap: 16px;
-  height: 100%;
+  gap: 10px;
+  height: 100vh;
   min-width: 320px;
-  padding: 18px;
+  overflow: hidden;
+  padding: 12px;
 }
 
 .topbar {
@@ -36,15 +38,21 @@ input {
   border-radius: 8px;
   box-shadow: 0 12px 36px rgba(31, 41, 55, 0.07);
   display: flex;
+  gap: 12px;
   justify-content: space-between;
-  min-height: 64px;
-  padding: 12px 18px;
+  min-height: 0;
+  padding: 10px 14px;
 }
 
 .brand {
   align-items: center;
   display: flex;
   gap: 14px;
+  min-width: 0;
+}
+
+.brand > div {
+  min-width: 0;
 }
 
 .brand-mark {
@@ -67,23 +75,28 @@ input {
 }
 
 .brand h1 {
-  font-size: 20px;
+  font-size: 18px;
   line-height: 1.2;
   margin: 0;
 }
 
 .brand p {
   color: #6b7487;
-  font-size: 13px;
-  margin: 5px 0 0;
+  font-size: 12px;
+  line-height: 1.35;
+  margin: 3px 0 0;
+  overflow-wrap: anywhere;
 }
 
 .session-meta {
   align-items: center;
   color: #4b5567;
   display: flex;
-  gap: 18px;
-  font-size: 14px;
+  flex-wrap: wrap;
+  gap: 9px;
+  font-size: 13px;
+  justify-content: flex-end;
+  min-width: 0;
 }
 
 .session-meta strong {
@@ -99,7 +112,7 @@ input {
   cursor: pointer;
   font-size: 13px;
   font-weight: 700;
-  padding: 9px 12px;
+  padding: 7px 10px;
 }
 
 .danger-button:disabled {
@@ -115,7 +128,7 @@ input {
   cursor: pointer;
   font-size: 13px;
   font-weight: 700;
-  padding: 9px 12px;
+  padding: 7px 10px;
 }
 
 .secondary-button:hover {
@@ -130,7 +143,7 @@ input {
   cursor: pointer;
   font-size: 13px;
   font-weight: 700;
-  padding: 9px 12px;
+  padding: 7px 10px;
 }
 
 .test-button:hover {
@@ -146,30 +159,33 @@ input {
   background: rgba(255, 255, 255, 0.96);
   border: 1px solid #dce5f4;
   border-radius: 8px;
-  box-shadow: 0 12px 32px rgba(31, 41, 55, 0.06);
-  padding: 13px 16px;
+  box-shadow: 0 8px 20px rgba(31, 41, 55, 0.05);
+  padding: 9px 12px;
 }
 
 .progress-header {
-  align-items: flex-start;
+  align-items: center;
   display: flex;
-  gap: 16px;
+  gap: 12px;
   justify-content: space-between;
 }
 
 .progress-header span {
   color: #172033;
   display: block;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 800;
   line-height: 1.35;
 }
 
 .progress-header p {
   color: #647086;
-  font-size: 13px;
-  line-height: 1.45;
-  margin: 3px 0 0;
+  font-size: 12px;
+  line-height: 1.35;
+  margin: 2px 0 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .progress-header strong {
@@ -182,8 +198,8 @@ input {
 .progress-track {
   background: #edf2fb;
   border-radius: 999px;
-  height: 8px;
-  margin-top: 12px;
+  height: 6px;
+  margin-top: 8px;
   overflow: hidden;
 }
 
@@ -200,7 +216,7 @@ input {
   gap: 8px;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   list-style: none;
-  margin: 10px 0 0;
+  margin: 7px 0 0;
   padding: 0;
 }
 
@@ -208,7 +224,7 @@ input {
   align-items: center;
   color: #8a94a8;
   display: inline-flex;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 800;
   gap: 6px;
   min-width: 0;
@@ -244,9 +260,10 @@ input {
 .workspace {
   display: grid;
   flex: 1;
-  gap: 16px;
+  gap: 12px;
   grid-template-columns: minmax(420px, 0.95fr) minmax(480px, 1.05fr);
   min-height: 0;
+  overflow: hidden;
 }
 
 .panel {
@@ -257,7 +274,8 @@ input {
   display: flex;
   flex-direction: column;
   min-height: 0;
-  padding: 18px;
+  overflow: hidden;
+  padding: 12px;
 }
 
 .panel-header {
@@ -265,13 +283,13 @@ input {
   border-bottom: 1px solid #edf0f6;
   display: flex;
   justify-content: space-between;
-  margin-bottom: 16px;
-  padding-bottom: 14px;
+  margin-bottom: 10px;
+  padding-bottom: 10px;
 }
 
 .eyebrow {
   color: #4f46e5;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 800;
   letter-spacing: 0;
   margin: 0 0 5px;
@@ -279,14 +297,21 @@ input {
 
 .panel h2 {
   color: #172033;
-  font-size: 18px;
+  font-size: 17px;
   line-height: 1.25;
   margin: 0;
 }
 
 @media (max-width: 1080px) {
+  .app-shell {
+    height: auto;
+    min-height: 100vh;
+    overflow: auto;
+  }
+
   .workspace {
     grid-template-columns: 1fr;
+    overflow: visible;
   }
 
   .topbar {
@@ -294,10 +319,15 @@ input {
     flex-direction: column;
     gap: 12px;
   }
+
+  .panel {
+    min-height: 520px;
+  }
 }
 
 @media (max-width: 640px) {
   .app-shell {
+    overflow: auto;
     padding: 10px;
   }
 
