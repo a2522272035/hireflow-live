@@ -5,7 +5,7 @@
         <span class="brand-mark"></span>
         <div>
           <h1>HireFlow AI面试助手</h1>
-          <p>{{ sessionSubtitle }} · 岗位：运营专员（平台运营方向）</p>
+          <p>{{ sessionSubtitle }} · 岗位：{{ displayJobTitle }}</p>
         </div>
       </div>
 
@@ -178,6 +178,12 @@ const sessionSubtitle = computed(() => {
   if (recordingStatus.value === 'recording') return '实时面试中'
   if (recordingStatus.value === 'finalizing') return '报告生成中'
   return '等待开始'
+})
+const displayJobTitle = computed(() => {
+  const profile = buildResumeProfile(loadedResume.value)
+  return profile.hasResume
+    ? profile.targetRole || profile.position || '目标岗位'
+    : '运营专员（平台运营方向）'
 })
 const demoButtonText = computed(() => testModeRunning.value ? '停止演示' : '演示测试')
 const workflowProgress = computed(() => {
@@ -1041,8 +1047,8 @@ function buildSessionSnapshot(extra = {}) {
   return {
     sessionId: sessionId.value,
     interviewer: '李明',
-    jobTitle: currentSessionDemo.value && resumeProfile.hasResume
-      ? resumeProfile.targetRole
+    jobTitle: resumeProfile.hasResume
+      ? resumeProfile.targetRole || resumeProfile.position || '目标岗位'
       : '运营专员（平台运营方向）',
     startedAt: startedAt.value,
     startedAtText: formatDateTime(startedAt.value),
