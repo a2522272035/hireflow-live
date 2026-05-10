@@ -1396,6 +1396,7 @@ def build_pdf_report(snapshot: dict, assessment: dict, pdf_path: Path) -> None:
 
     story.append(paragraph("HireFlow AI 面试报告", title))
     summary_rows = [
+        ["报告类型", "演示模式" if snapshot.get("demoMode") else "正式面试", "生成方式", "真实简历 + 模拟问答" if snapshot.get("demoMode") else "实时面试记录"],
         ["岗位", snapshot.get("jobTitle") or "运营专员（平台运营方向）", "面试官", snapshot.get("interviewer") or "李明"],
         ["候选人", (resume or {}).get("name") or "未填写", "面试时长", snapshot.get("elapsedTime") or ""],
         ["开始时间", snapshot.get("startedAtText") or "", "结束时间", snapshot.get("endedAtText") or ""],

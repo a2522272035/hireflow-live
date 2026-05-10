@@ -27,6 +27,14 @@
         >
           {{ demoButtonText }}
         </button>
+        <button
+          type="button"
+          class="secondary-button"
+          :disabled="finishingInterview || testModeRunning || recordingStatus === 'recording' || recordingStatus === 'finalizing'"
+          @click="generateInstantDemoReport"
+        >
+          生成演示报告
+        </button>
         <button type="button" class="danger-button" :disabled="!canFinishInterview" @click="finishInterview">
           {{ finishButtonText }}
         </button>
@@ -373,6 +381,40 @@ async function finishInterview() {
   }
 }
 
+async function generateInstantDemoReport() {
+  if (finishingInterview.value || testModeRunning.value || recordingStatus.value === 'recording') return
+  finishingInterview.value = true
+  const previousResume = loadedResume.value
+  try {
+    stopDemoInterview()
+    setReportProgress('transcript', 35, '生成模拟转写', '正在基于真实简历生成演示问答和候选人回答。')
+    const demoSession = buildInstantDemoSession(previousResume)
+    loadDemoSessionToUi(demoSession)
+    setReportProgress('analysis', 64, '生成模拟AI评价', '正在整理演示用阶段评价、存疑点和追问建议。')
+    await wait(500)
+    setReportProgress('report', 84, '演示报告归档中', '正在生成演示模式 PDF 和 TXT 文件。')
+    const report = await saveFinalReport(demoSession.snapshot)
+    setReportProgress('done', 100, '演示报告已生成', '测试报告已保存，可用于后续企业微信推送演示。')
+    persistCompletedSession(demoSession.snapshot, report)
+    const savedFiles = [
+      '报告类型：演示模式',
+      report.folder_path ? `保存目录：${report.folder_path}` : '',
+      `PDF报告：${report.pdf_path}`,
+      report.transcript_path ? `角色转写文本：${report.transcript_path}` : '',
+      report.realtime_transcript_path ? `实时原始转写：${report.realtime_transcript_path}` : ''
+    ].filter(Boolean).join('\n')
+    window.alert(`演示报告已生成：\n${savedFiles}`)
+  } catch (error) {
+    recordingStatus.value = 'stopped'
+    setReportProgress('report', 100, '演示报告生成失败', error.message || '请稍后重试。')
+    asrStatus.value = `演示报告生成失败：${error.message}`
+    console.error('[DemoReport] 生成失败:', error)
+  } finally {
+    finishingInterview.value = false
+    loadedResume.value = previousResume
+  }
+}
+
 function resetInterview() {
   stopDemoInterview()
   clearReportProgress()
@@ -553,6 +595,111 @@ function runDemoScript() {
   })
 }
 
+function buildInstantDemoSession(resume = loadedResume.value) {
+  const profile = buildResumeProfile(resume)
+  const turns = buildDemoTurns().slice(0, 4)
+  const createdAt = Date.now()
+  const demoSessionId = `demo-report-${createdAt}`
+  const demoFinals = []
+  const demoAnalyses = []
+  const demoMessages = [{
+    id: makeDemoId('system'),
+    type: 'system',
+    content: '演示模式：本报告基于真实简历和模拟面试问答生成，用于流程演示。',
+    time: formatClock(createdAt)
+  }]
+
+  turns.forEach((turn, index) => {
+    const questionTime = formatClock(createdAt + index * 90000)
+    const answerTime = formatClock(createdAt + index * 90000 + 18000)
+    const questionEntry = createDemoFinalEntry({
+      id: makeDemoId('line'),
+      text: turn.question,
+      speaker: 'interviewer',
+      label: '面试官',
+      time: questionTime
+    })
+    const answerEntry = createDemoFinalEntry({
+      id: makeDemoId('line'),
+      text: turn.sampleAnswers.join(''),
+      speaker: 'candidate',
+      label: '候选人',
+      time: answerTime
+    })
+    const analysisRecord = createDemoAnalysisRecord(turn, answerEntry, index, formatClock(createdAt + index * 90000 + 30000))
+    demoFinals.push(questionEntry, answerEntry)
+    demoAnalyses.push(analysisRecord)
+    demoMessages.push({
+      id: makeDemoId('ai'),
+      type: 'ai',
+      content: buildDemoAnalysisMessage(analysisRecord),
+      time: analysisRecord.time
+    })
+  })
+
+  const endedAt = createdAt + Math.max(1, turns.length) * 90000
+  const snapshot = {
+    sessionId: demoSessionId,
+    interviewer: '李明',
+    jobTitle: profile.hasResume ? profile.targetRole : '运营专员（平台运营方向）',
+    startedAt: createdAt,
+    startedAtText: formatDateTime(createdAt),
+    endedAt,
+    endedAtText: formatDateTime(endedAt),
+    elapsedTime: formatElapsed(endedAt - createdAt),
+    demoMode: true,
+    resume,
+    finals: demoFinals.map(normalizeTranscriptEntry),
+    messages: demoMessages,
+    analyses: demoAnalyses,
+    recordingStatus: 'stopped',
+    updatedAt: Date.now(),
+    reportType: '演示模式'
+  }
+  return {
+    snapshot,
+    questions: (demoAnalyses.at(-1)?.questions || []).slice(0, 3).map((text) => ({ id: makeDemoId('question'), text })),
+    doubts: (demoAnalyses.at(-1)?.doubts || []).slice(0, 5).map((text, index) => ({ id: makeDemoId('doubt'), text, index: index + 1 }))
+  }
+}
+
+function loadDemoSessionToUi(demoSession) {
+  const snapshot = demoSession.snapshot
+  sessionId.value = snapshot.sessionId
+  startedAt.value = snapshot.startedAt
+  now.value = snapshot.endedAt
+  currentSessionDemo.value = true
+  hasStartedInterview.value = true
+  recordingStatus.value = 'stopped'
+  asrStatus.value = '演示报告已生成'
+  vadStatus.value = '测试模式'
+  semanticStatus.value = '模拟问答完成'
+  partialText.value = ''
+  currentText.value = ''
+  finals.value = snapshot.finals
+  messages.value = snapshot.messages
+  analyses.value = snapshot.analyses
+  questions.value = demoSession.questions
+  doubts.value = demoSession.doubts
+  aiLoading.value = false
+  persistSession({ ...snapshot, recordingStatus: 'stopped' })
+}
+
+function createDemoFinalEntry({ id, text, speaker, label, time }) {
+  return {
+    id,
+    text,
+    speaker,
+    speakerLabel: label,
+    roleStatus: 'classified',
+    roleSource: 'demo',
+    roleConfidence: 1,
+    roleReason: '测试模式预置角色',
+    time,
+    pending: false
+  }
+}
+
 function buildDemoTurns() {
   const profile = buildResumeProfile(loadedResume.value)
   if (!profile.hasResume) return mockInterviewScenario.questions
@@ -720,19 +867,9 @@ function addDemoAnalysis(question, entry, index) {
     time: formatClock()
   })
   scheduleDemo(950, () => {
-    const doubtsList = buildDemoDoubts(question, index)
-    const questionList = buildDemoFollowUps(question, index)
-    const analysisRecord = {
-      id: makeDemoId('analysis'),
-      sourceId: entry.id,
-      triggerType: 'demo_candidate_sentence_done',
-      transcript: `面试官：${question.question}\n候选人：${entry.text}`,
-      analysis: buildDemoAnalysisText(question, index),
-      is_correct: true,
-      doubts: doubtsList,
-      questions: questionList,
-      time: formatClock()
-    }
+    const analysisRecord = createDemoAnalysisRecord(question, entry, index)
+    const questionList = analysisRecord.questions || []
+    const doubtsList = analysisRecord.doubts || []
     analyses.value.push(analysisRecord)
     messages.value[messages.value.length - 1] = {
       id: makeDemoId('ai'),
@@ -752,6 +889,22 @@ function addDemoAnalysis(question, entry, index) {
     aiLoading.value = false
     persistSession()
   })
+}
+
+function createDemoAnalysisRecord(question, entry, index, time = formatClock()) {
+  const doubtsList = buildDemoDoubts(question, index)
+  const questionList = buildDemoFollowUps(question, index)
+  return {
+    id: makeDemoId('analysis'),
+    sourceId: entry.id,
+    triggerType: 'demo_candidate_sentence_done',
+    transcript: `面试官：${question.question}\n候选人：${entry.text}`,
+    analysis: buildDemoAnalysisText(question, index),
+    is_correct: true,
+    doubts: doubtsList,
+    questions: questionList,
+    time
+  }
 }
 
 function buildDemoAnalysisText(question, index) {
@@ -822,6 +975,14 @@ function formatDateTime(value) {
   const mi = String(date.getMinutes()).padStart(2, '0')
   const ss = String(date.getSeconds()).padStart(2, '0')
   return `${yyyy}-${mm}-${dd} ${hh}:${mi}:${ss}`
+}
+
+function formatElapsed(milliseconds) {
+  const seconds = Math.max(0, Math.floor(milliseconds / 1000))
+  const hh = String(Math.floor(seconds / 3600)).padStart(2, '0')
+  const mm = String(Math.floor((seconds % 3600) / 60)).padStart(2, '0')
+  const ss = String(seconds % 60).padStart(2, '0')
+  return `${hh}:${mm}:${ss}`
 }
 
 function buildSessionSnapshot(extra = {}) {
