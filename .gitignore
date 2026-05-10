@@ -1,5 +1,7 @@
 .env
 .env.local
+.env.server
+.env.production
 .env.*.local
 !.env.example
 
