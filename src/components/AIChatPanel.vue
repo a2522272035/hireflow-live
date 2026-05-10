@@ -205,33 +205,21 @@ watch(
 }
 
 .ai-status.loading .status-dot {
-  animation: pulse 1s infinite ease-in-out;
   background: #f5a524;
 }
 
 .ai-workbench {
-  background: linear-gradient(135deg, #f8fbff, #f6fefb);
+  background: #f8fafc;
   border: 1px solid #dce8f8;
   border-radius: 10px;
   margin-bottom: 14px;
-  overflow: hidden;
   padding: 12px;
-  position: relative;
-}
-
-.ai-workbench::before {
-  animation: workbench-scan 3s linear infinite;
-  background: linear-gradient(90deg, transparent, rgba(79, 70, 229, 0.18), transparent);
-  content: "";
-  inset: 0;
-  position: absolute;
 }
 
 .thinking-pipeline,
 .resume-hit-strip,
 .ai-metrics {
   position: relative;
-  z-index: 1;
 }
 
 .thinking-pipeline {
@@ -251,19 +239,8 @@ watch(
   font-weight: 800;
   justify-content: center;
   min-height: 30px;
-  overflow: hidden;
   padding: 6px 8px;
-  position: relative;
   text-align: center;
-}
-
-.thinking-pipeline span::after {
-  animation: step-glow 2.2s ease-in-out infinite;
-  animation-delay: var(--step-delay);
-  background: linear-gradient(90deg, transparent, rgba(37, 99, 235, 0.2), transparent);
-  content: "";
-  inset: 0;
-  position: absolute;
 }
 
 .ai-workbench.loading .thinking-pipeline span {
@@ -393,40 +370,6 @@ watch(
   min-height: 180px;
   padding: 24px;
   text-align: center;
-}
-
-@keyframes pulse {
-  0%, 100% {
-    opacity: 0.45;
-    transform: scale(0.9);
-  }
-  50% {
-    opacity: 1;
-    transform: scale(1.15);
-  }
-}
-
-@keyframes step-glow {
-  0% {
-    opacity: 0;
-    transform: translateX(-85%);
-  }
-  45%, 55% {
-    opacity: 1;
-  }
-  100% {
-    opacity: 0;
-    transform: translateX(85%);
-  }
-}
-
-@keyframes workbench-scan {
-  0% {
-    transform: translateX(-35%);
-  }
-  100% {
-    transform: translateX(35%);
-  }
 }
 
 @media (max-width: 720px) {

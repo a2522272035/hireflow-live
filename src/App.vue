@@ -61,15 +61,6 @@
           {{ step.label }}
         </li>
       </ol>
-      <div class="progress-signal-grid">
-        <span
-          v-for="signal in progressSignals"
-          :key="signal.key"
-          :class="{ active: signal.active, done: signal.done }"
-        >
-          <i></i>{{ signal.label }}
-        </span>
-      </div>
     </section>
 
     <section class="workspace">
@@ -144,16 +135,6 @@ const progressSteps = [
   { key: 'done', label: '完成', order: 4 }
 ]
 const progressStepOrder = Object.fromEntries(progressSteps.map((step) => [step.key, step.order]))
-const pipelineSignals = [
-  { key: 'audio', label: '音频缓冲' },
-  { key: 'vad', label: '端点检测' },
-  { key: 'asr', label: '语音转写' },
-  { key: 'speaker', label: '角色判断' },
-  { key: 'resume', label: '简历上下文' },
-  { key: 'ai', label: 'AI片段评价' },
-  { key: 'summary', label: '总评汇总' },
-  { key: 'archive', label: 'PDF归档' }
-]
 
 const elapsedTime = computed(() => {
   if (!hasStartedInterview.value) return '00:00:00'
@@ -211,33 +192,6 @@ const workflowProgress = computed(() => {
   }
   return normalizeProgress({ visible: false, step: 'transcript', percent: 0, title: '', detail: '' })
 })
-const progressSignals = computed(() => {
-  if (!workflowProgress.value.visible) return []
-  const activeIndex = Math.floor(now.value / 1000) % pipelineSignals.length
-  const doneKeys = new Set()
-  if (finals.value.length > 0) {
-    doneKeys.add('audio')
-    doneKeys.add('vad')
-    doneKeys.add('asr')
-  }
-  if (finals.value.some((item) => item.speaker && item.speaker !== 'unknown')) doneKeys.add('speaker')
-  if (loadedResume.value) doneKeys.add('resume')
-  if (analyses.value.length > 0) doneKeys.add('ai')
-  if (workflowProgress.value.order >= progressStepOrder.report) doneKeys.add('summary')
-  if (workflowProgress.value.step === 'done') {
-    pipelineSignals.forEach((item) => doneKeys.add(item.key))
-  }
-  return pipelineSignals.map((signal, index) => ({
-    ...signal,
-    active: index === activeIndex || (
-      workflowProgress.value.step === 'analysis' && signal.key === 'ai'
-    ) || (
-      workflowProgress.value.step === 'report' && ['summary', 'archive'].includes(signal.key)
-    ),
-    done: doneKeys.has(signal.key)
-  }))
-})
-
 const { micStatus, sendingAudio, start: startMic, stop: stopMic } = useAudioRecorder()
 
 const {

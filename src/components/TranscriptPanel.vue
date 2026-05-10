@@ -339,25 +339,16 @@ watch(
   border-radius: 10px;
   display: grid;
   gap: 14px;
-  grid-template-columns: 150px 1fr;
+  grid-template-columns: minmax(170px, 210px) minmax(0, 1fr);
   margin-bottom: 16px;
-  overflow: hidden;
-  padding: 12px 14px;
-  position: relative;
-}
-
-.audio-visualizer::before {
-  animation: visualizer-scan 2.6s linear infinite;
-  background: linear-gradient(90deg, transparent, rgba(37, 99, 235, 0.22), transparent);
-  content: "";
-  inset: 0;
-  position: absolute;
+  min-height: 78px;
+  overflow: visible;
+  padding: 14px 16px;
 }
 
 .visualizer-copy,
 .wave-bars {
-  position: relative;
-  z-index: 1;
+  min-width: 0;
 }
 
 .visualizer-copy span {
@@ -365,21 +356,27 @@ watch(
   display: block;
   font-size: 12px;
   font-weight: 800;
+  line-height: 1.45;
   margin-bottom: 4px;
+  overflow-wrap: anywhere;
 }
 
 .visualizer-copy strong {
   color: #334155;
   display: block;
   font-size: 13px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
 }
 
 .wave-bars {
   align-items: center;
   display: flex;
   gap: 5px;
-  height: 42px;
+  height: 48px;
   justify-content: space-between;
+  min-width: 0;
+  overflow: visible;
 }
 
 .wave-bars i {
@@ -424,15 +421,6 @@ watch(
   }
   50% {
     transform: scaleY(1.25);
-  }
-}
-
-@keyframes visualizer-scan {
-  0% {
-    transform: translateX(-45%);
-  }
-  100% {
-    transform: translateX(45%);
   }
 }
 
