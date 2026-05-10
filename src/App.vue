@@ -518,7 +518,7 @@ function startDemoInterview() {
 
 function runDemoScript() {
   const turns = buildDemoTurns().slice(0, 4)
-  let delay = 450
+  let delay = 900
   turns.forEach((item, index) => {
     delay = scheduleDemoSpeech({
       delay,
@@ -533,9 +533,9 @@ function runDemoScript() {
       text: item.sampleAnswers.join(''),
       onDone: (entry) => addDemoAnalysis(item, entry, index)
     })
-    delay += 550
+    delay += 950
   })
-  scheduleDemo(delay + 600, () => {
+  scheduleDemo(delay + 1000, () => {
     testModeRunning.value = false
     recordingStatus.value = 'stopped'
     asrStatus.value = '已停止'
@@ -671,7 +671,7 @@ function normalizeResumeExperiences(value) {
 }
 
 function scheduleDemoSpeech({ delay, speaker, label, text, onDone }) {
-  const speechDuration = Math.min(1800, Math.max(900, Math.floor(text.length * 18)))
+  const speechDuration = Math.min(3600, Math.max(1300, Math.floor(text.length * 28)))
   scheduleDemo(delay, () => {
     vadStatus.value = 'VAD 检测中'
     semanticStatus.value = '正在判断语义完整性...'
@@ -681,6 +681,10 @@ function scheduleDemoSpeech({ delay, speaker, label, text, onDone }) {
   })
   scheduleDemo(delay + Math.floor(speechDuration * 0.45), () => {
     partialText.value = text.slice(0, Math.min(text.length, 58))
+    currentText.value = partialText.value
+  })
+  scheduleDemo(delay + Math.floor(speechDuration * 0.72), () => {
+    partialText.value = text.slice(0, Math.min(text.length, 92))
     currentText.value = partialText.value
   })
   scheduleDemo(delay + speechDuration, () => {
@@ -704,7 +708,7 @@ function scheduleDemoSpeech({ delay, speaker, label, text, onDone }) {
     asrStatus.value = '✓ 已确认句子'
     if (onDone) onDone(entry)
   })
-  return delay + speechDuration + 900
+  return delay + speechDuration + 1200
 }
 
 function addDemoAnalysis(question, entry, index) {
@@ -715,7 +719,7 @@ function addDemoAnalysis(question, entry, index) {
     content: '正在分析面试片段...',
     time: formatClock()
   })
-  scheduleDemo(620, () => {
+  scheduleDemo(950, () => {
     const doubtsList = buildDemoDoubts(question, index)
     const questionList = buildDemoFollowUps(question, index)
     const analysisRecord = {
