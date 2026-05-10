@@ -3025,6 +3025,8 @@ def make_http_handler(session: DoubaoSession):
                 after = int((params.get("after") or ["0"])[0] or "0")
                 self.send_json(HTTPStatus.OK, {"events": session.events_after(after)})
             elif path.path == "/":
+                if self.serve_dist(path.path):
+                    return
                 self.send_text(HTTPStatus.OK, PAGE, "text/html; charset=utf-8")
             elif path.path == "/debug-env":
                 self.send_json(
