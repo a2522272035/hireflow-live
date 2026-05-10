@@ -19,7 +19,13 @@
     <div class="status-strip">
       <div class="status-item">
         <span class="label">录音状态</span>
-        <strong :class="recordingStatus">{{ statusText }}</strong>
+        <div class="recording-line">
+          <span class="voice-icon" :class="{ active: isRecording, speaking: hasLiveSpeech }" :style="{ '--voice-fill': `${voiceFillPercent}%` }" aria-hidden="true"><i></i></span>
+          <div>
+            <strong :class="recordingStatus">{{ statusText }}</strong>
+            <small>{{ hasLiveSpeech ? '检测到发言' : isRecording ? '等待发言' : micStatus }}</small>
+          </div>
+        </div>
       </div>
       <div class="status-item">
         <span class="label">VAD 检测</span>
@@ -32,14 +38,6 @@
       <div class="status-item">
         <span class="label">ASR</span>
         <strong>{{ asrStatus }}</strong>
-      </div>
-    </div>
-
-    <div class="audio-indicator" :class="{ active: isRecording, speaking: hasLiveSpeech }">
-      <span class="voice-icon" :style="{ '--voice-fill': `${voiceFillPercent}%` }" aria-hidden="true"><i></i></span>
-      <div class="voice-copy">
-        <strong>{{ hasLiveSpeech ? '正在收音' : isRecording ? '麦克风已开启' : '麦克风待机' }}</strong>
-        <span>{{ hasLiveSpeech ? '检测到发言' : isRecording ? '等待发言' : micStatus }}</span>
       </div>
     </div>
 
@@ -307,6 +305,28 @@ watch(
   overflow-wrap: anywhere;
 }
 
+.recording-line {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+}
+
+.recording-line > div {
+  min-width: 0;
+}
+
+.recording-line small {
+  color: #7b8497;
+  display: block;
+  font-size: 11px;
+  line-height: 1.2;
+  margin-top: 1px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .status-item strong.recording {
   color: #0f9f6e;
 }
@@ -344,30 +364,16 @@ watch(
   font-weight: 600;
 }
 
-.audio-indicator {
-  align-items: center;
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
-  border-radius: 999px;
-  display: inline-flex;
-  gap: 10px;
-  justify-self: flex-start;
-  margin-bottom: 10px;
-  max-width: 100%;
-  min-height: 42px;
-  padding: 5px 12px 5px 6px;
-}
-
 .voice-icon {
   background: #eef2f7;
   border: 1px solid #d7deeb;
   border-radius: 50%;
   display: inline-flex;
   flex: 0 0 auto;
-  height: 32px;
+  height: 28px;
   overflow: hidden;
   position: relative;
-  width: 32px;
+  width: 28px;
 }
 
 .voice-icon::before {
@@ -385,13 +391,13 @@ watch(
 .voice-icon i {
   background: #64748b;
   border-radius: 999px;
-  height: 13px;
+  height: 11px;
   left: 50%;
   position: absolute;
-  top: 7px;
+  top: 6px;
   transform: translateX(-50%);
   transition: background-color 0.22s ease;
-  width: 8px;
+  width: 7px;
   z-index: 1;
 }
 
@@ -400,80 +406,52 @@ watch(
   border-top: 0;
   border-radius: 0 0 999px 999px;
   content: "";
-  height: 8px;
+  height: 7px;
   left: 50%;
   position: absolute;
-  top: 10px;
+  top: 9px;
   transform: translateX(-50%);
   transition: border-color 0.22s ease;
-  width: 14px;
+  width: 12px;
 }
 
 .voice-icon i::after {
   background: #64748b;
   border-radius: 999px;
   content: "";
-  height: 7px;
+  height: 6px;
   left: 50%;
   position: absolute;
-  top: 18px;
+  top: 16px;
   transform: translateX(-50%);
   transition: background-color 0.22s ease;
   width: 2px;
 }
 
-.voice-copy {
-  min-width: 0;
-}
-
-.voice-copy strong {
-  color: #334155;
-  display: block;
-  font-size: 12px;
-  font-weight: 850;
-  line-height: 1.25;
-}
-
-.voice-copy span {
-  color: #7b8497;
-  display: block;
-  font-size: 11px;
-  line-height: 1.25;
-  max-width: 180px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.audio-indicator.active {
-  background: #f8fbff;
+.voice-icon.active {
   border-color: #c7d7f6;
 }
 
-.audio-indicator.active .voice-icon::before {
+.voice-icon.active::before {
   opacity: 0.86;
 }
 
-.audio-indicator.speaking {
+.voice-icon.speaking {
   border-color: #86efac;
   box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.1);
 }
 
-.audio-indicator.speaking .voice-icon::before {
+.voice-icon.speaking::before {
   opacity: 1;
 }
 
-.audio-indicator.speaking .voice-icon i,
-.audio-indicator.speaking .voice-icon i::after {
+.voice-icon.speaking i,
+.voice-icon.speaking i::after {
   background: #fff;
 }
 
-.audio-indicator.speaking .voice-icon i::before {
+.voice-icon.speaking i::before {
   border-color: #fff;
-}
-
-.audio-indicator.speaking .voice-copy strong {
-  color: #047857;
 }
 
 @keyframes pulse-border {
@@ -645,8 +623,5 @@ watch(
     margin-left: 0;
   }
 
-  .audio-indicator {
-    width: 100%;
-  }
 }
 </style>

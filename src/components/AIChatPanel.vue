@@ -11,13 +11,13 @@
       </span>
     </header>
 
-    <div class="ai-workbench" :class="{ loading }">
+    <div v-if="showWorkbench" class="ai-workbench" :class="{ loading }">
       <div v-if="resumeTags.length" class="resume-hit-strip">
         <strong>简历命中</strong>
         <span v-for="tag in resumeTags" :key="tag">{{ tag }}</span>
       </div>
 
-      <div class="ai-metrics">
+      <div v-if="aiMetrics.length" class="ai-metrics">
         <div v-for="metric in aiMetrics" :key="metric.label" class="metric-row">
           <span>{{ metric.label }}</span>
           <i><b :style="{ width: `${metric.value}%` }"></b></i>
@@ -105,24 +105,32 @@ const resumeTags = computed(() => {
   return [...new Set(tags.map((item) => String(item || '').trim()).filter(Boolean))].slice(0, 8)
 })
 
+const showWorkbench = computed(() => resumeTags.value.length > 0 || props.analyses.length > 0 || props.questions.length > 0 || props.doubts.length > 0 || props.loading)
+
 const aiMetrics = computed(() => {
   const analysisCount = props.analyses.length
   const doubtCount = props.doubts.length
   const questionCount = props.questions.length
-  return [
-    {
+  const metrics = []
+  if (resumeTags.value.length) {
+    metrics.push({
       label: '简历匹配',
-      value: clampMetric(resumeTags.value.length ? 58 + resumeTags.value.length * 5 : 34)
-    },
-    {
+      value: clampMetric(58 + resumeTags.value.length * 5)
+    })
+  }
+  if (analysisCount > 0 || questionCount > 0) {
+    metrics.push({
       label: '回答具体度',
       value: clampMetric(42 + analysisCount * 9 + questionCount * 3)
-    },
-    {
+    })
+  }
+  if (doubtCount > 0) {
+    metrics.push({
       label: '风险可视化',
       value: clampMetric(52 + Math.min(doubtCount, 5) * 8)
-    }
-  ]
+    })
+  }
+  return metrics
 })
 
 function readText(source, raw, ...keys) {
