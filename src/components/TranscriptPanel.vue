@@ -35,13 +35,11 @@
       </div>
     </div>
 
-    <div class="audio-visualizer" :class="{ active: isRecording, speaking: hasLiveSpeech }">
-      <div class="visualizer-copy">
-        <span>{{ hasLiveSpeech ? '捕获有效语音' : isRecording ? '全程监听中' : '声纹待机' }}</span>
-        <strong>{{ hasLiveSpeech ? '语音流处理中' : isRecording ? '等待下一段发言' : '未接入' }}</strong>
-      </div>
-      <div class="wave-bars" aria-hidden="true">
-        <i v-for="item in visualizerBars" :key="item"></i>
+    <div class="audio-indicator" :class="{ active: isRecording, speaking: hasLiveSpeech }">
+      <span class="voice-icon" :style="{ '--voice-fill': `${voiceFillPercent}%` }" aria-hidden="true"><i></i></span>
+      <div class="voice-copy">
+        <strong>{{ hasLiveSpeech ? '正在收音' : isRecording ? '麦克风已开启' : '麦克风待机' }}</strong>
+        <span>{{ hasLiveSpeech ? '检测到发言' : isRecording ? '等待发言' : micStatus }}</span>
       </div>
     </div>
 
@@ -108,6 +106,10 @@ const props = defineProps({
     type: String,
     default: '未授权'
   },
+  volumeLevel: {
+    type: Number,
+    default: 0
+  },
   asrStatus: {
     type: String,
     default: '未连接'
@@ -141,10 +143,16 @@ const props = defineProps({
 defineEmits(['toggle-recording', 'set-mode'])
 
 const transcriptRef = ref(null)
-const visualizerBars = Array.from({ length: 22 }, (_, index) => index)
 
 const isRecording = computed(() => props.recordingStatus === 'recording')
 const hasLiveSpeech = computed(() => Boolean(props.partialText || props.currentText))
+const voiceFillPercent = computed(() => {
+  if (!isRecording.value) return 0
+  const liveLevel = Math.round(Math.max(0, Math.min(1, Number(props.volumeLevel) || 0)) * 100)
+  if (liveLevel > 0) return Math.max(hasLiveSpeech.value ? 46 : 18, liveLevel)
+  if (hasLiveSpeech.value) return 78
+  return 24
+})
 const recordButtonDisabled = computed(() => ['recording', 'finalizing', 'finished'].includes(props.recordingStatus))
 const recordButtonText = computed(() => {
   if (props.recordingStatus === 'recording') return '全程录音中'
@@ -336,76 +344,136 @@ watch(
   font-weight: 600;
 }
 
-.audio-visualizer {
+.audio-indicator {
   align-items: center;
-  background: linear-gradient(135deg, #f8fbff, #f1f5ff);
-  border: 1px solid #dbe7ff;
-  border-radius: 10px;
-  display: grid;
-  gap: 14px;
-  grid-template-columns: minmax(170px, 210px) minmax(0, 1fr);
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 999px;
+  display: inline-flex;
+  gap: 10px;
+  justify-self: flex-start;
   margin-bottom: 10px;
-  min-height: 68px;
-  overflow: visible;
-  padding: 10px 12px;
+  max-width: 100%;
+  min-height: 42px;
+  padding: 5px 12px 5px 6px;
 }
 
-.visualizer-copy,
-.wave-bars {
+.voice-icon {
+  background: #eef2f7;
+  border: 1px solid #d7deeb;
+  border-radius: 50%;
+  display: inline-flex;
+  flex: 0 0 auto;
+  height: 32px;
+  overflow: hidden;
+  position: relative;
+  width: 32px;
+}
+
+.voice-icon::before {
+  background: linear-gradient(180deg, #93c5fd, #22c55e);
+  bottom: 0;
+  content: "";
+  height: var(--voice-fill, 0%);
+  left: 0;
+  opacity: 0.9;
+  position: absolute;
+  transition: height 0.22s ease, opacity 0.22s ease;
+  width: 100%;
+}
+
+.voice-icon i {
+  background: #64748b;
+  border-radius: 999px;
+  height: 13px;
+  left: 50%;
+  position: absolute;
+  top: 7px;
+  transform: translateX(-50%);
+  transition: background-color 0.22s ease;
+  width: 8px;
+  z-index: 1;
+}
+
+.voice-icon i::before {
+  border: 2px solid #64748b;
+  border-top: 0;
+  border-radius: 0 0 999px 999px;
+  content: "";
+  height: 8px;
+  left: 50%;
+  position: absolute;
+  top: 10px;
+  transform: translateX(-50%);
+  transition: border-color 0.22s ease;
+  width: 14px;
+}
+
+.voice-icon i::after {
+  background: #64748b;
+  border-radius: 999px;
+  content: "";
+  height: 7px;
+  left: 50%;
+  position: absolute;
+  top: 18px;
+  transform: translateX(-50%);
+  transition: background-color 0.22s ease;
+  width: 2px;
+}
+
+.voice-copy {
   min-width: 0;
 }
 
-.visualizer-copy span {
-  color: #2563eb;
-  display: block;
-  font-size: 12px;
-  font-weight: 800;
-  line-height: 1.45;
-  margin-bottom: 4px;
-  overflow-wrap: anywhere;
-}
-
-.visualizer-copy strong {
+.voice-copy strong {
   color: #334155;
   display: block;
-  font-size: 13px;
-  line-height: 1.5;
-  overflow-wrap: anywhere;
+  font-size: 12px;
+  font-weight: 850;
+  line-height: 1.25;
 }
 
-.wave-bars {
-  align-items: center;
-  display: flex;
-  gap: 5px;
-  height: 42px;
-  justify-content: space-between;
-  min-width: 0;
-  overflow: visible;
-}
-
-.wave-bars i {
-  animation: wave-idle 1.65s ease-in-out infinite;
-  animation-delay: calc(var(--bar-index, 0) * 0.04s);
-  background: linear-gradient(180deg, #60a5fa, #22c55e);
-  border-radius: 999px;
+.voice-copy span {
+  color: #7b8497;
   display: block;
-  height: 10px;
-  opacity: 0.45;
-  width: 4px;
+  font-size: 11px;
+  line-height: 1.25;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.wave-bars i:nth-child(2n) { --bar-index: 2; height: 18px; }
-.wave-bars i:nth-child(3n) { --bar-index: 4; height: 24px; }
-.wave-bars i:nth-child(4n) { --bar-index: 6; height: 14px; }
-.wave-bars i:nth-child(5n) { --bar-index: 8; height: 30px; }
-
-.audio-visualizer.active .wave-bars i {
-  opacity: 0.72;
+.audio-indicator.active {
+  background: #f8fbff;
+  border-color: #c7d7f6;
 }
 
-.audio-visualizer.speaking .wave-bars i {
-  animation-duration: 0.72s;
+.audio-indicator.active .voice-icon::before {
+  opacity: 0.86;
+}
+
+.audio-indicator.speaking {
+  border-color: #86efac;
+  box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.1);
+}
+
+.audio-indicator.speaking .voice-icon::before {
   opacity: 1;
+}
+
+.audio-indicator.speaking .voice-icon i,
+.audio-indicator.speaking .voice-icon i::after {
+  background: #fff;
+}
+
+.audio-indicator.speaking .voice-icon i::before {
+  border-color: #fff;
+}
+
+.audio-indicator.speaking .voice-copy strong {
+  color: #047857;
 }
 
 @keyframes pulse-border {
@@ -416,15 +484,6 @@ watch(
   50% {
     opacity: 0.7;
     transform: scale(1.02);
-  }
-}
-
-@keyframes wave-idle {
-  0%, 100% {
-    transform: scaleY(0.48);
-  }
-  50% {
-    transform: scaleY(1.25);
   }
 }
 
@@ -586,8 +645,8 @@ watch(
     margin-left: 0;
   }
 
-  .audio-visualizer {
-    grid-template-columns: 1fr;
+  .audio-indicator {
+    width: 100%;
   }
 }
 </style>

@@ -3,6 +3,7 @@ import { ref } from 'vue'
 export function useAudioRecorder() {
   const micStatus = ref('未授权')
   const sendingAudio = ref(false)
+  const volumeLevel = ref(0)
   let audioContext = null
   let source = null
   let processor = null
@@ -31,6 +32,16 @@ export function useAudioRecorder() {
     return pcm.buffer
   }
 
+  function updateVolumeLevel(input) {
+    let sum = 0
+    for (let index = 0; index < input.length; index += 1) {
+      sum += input[index] * input[index]
+    }
+    const rms = Math.sqrt(sum / Math.max(1, input.length))
+    const normalized = Math.min(1, rms * 14)
+    volumeLevel.value = volumeLevel.value * 0.68 + normalized * 0.32
+  }
+
   async function start(callback) {
     onAudioChunk = callback
     isSending = true
@@ -49,6 +60,7 @@ export function useAudioRecorder() {
     processor.onaudioprocess = (event) => {
       if (!isSending) return
       const input = event.inputBuffer.getChannelData(0)
+      updateVolumeLevel(input)
       const pcm = floatTo16BitPCM(downsampleTo16k(input, audioContext.sampleRate))
       if (onAudioChunk) onAudioChunk(pcm)
     }
@@ -59,6 +71,7 @@ export function useAudioRecorder() {
   async function stop() {
     isSending = false
     sendingAudio.value = false
+    volumeLevel.value = 0
     onAudioChunk = null
     if (processor) processor.disconnect()
     if (source) source.disconnect()
@@ -71,5 +84,5 @@ export function useAudioRecorder() {
     micStatus.value = '未授权'
   }
 
-  return { micStatus, sendingAudio, start, stop }
+  return { micStatus, sendingAudio, volumeLevel, start, stop }
 }

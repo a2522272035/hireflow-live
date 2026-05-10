@@ -67,6 +67,7 @@
       <TranscriptPanel
         :recording-status="recordingStatus"
         :mic-status="micStatus"
+        :volume-level="volumeLevel"
         :asr-status="asrStatus"
         :vad-status="vadStatus"
         :semantic-status="semanticStatus"
@@ -192,7 +193,7 @@ const workflowProgress = computed(() => {
   }
   return normalizeProgress({ visible: false, step: 'transcript', percent: 0, title: '', detail: '' })
 })
-const { micStatus, sendingAudio, start: startMic, stop: stopMic } = useAudioRecorder()
+const { micStatus, sendingAudio, volumeLevel, start: startMic, stop: stopMic } = useAudioRecorder()
 
 const {
   asrStatus, vadStatus, semanticStatus,
