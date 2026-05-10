@@ -353,7 +353,12 @@ async function finishInterview() {
     semanticStatus.value = '整理报告中'
     await waitForAiSettled()
     setReportProgress('report', 74, '汇总最终评价', '正在汇总既有AI评价、简历信息和转写上下文。')
-    const snapshot = buildSessionSnapshot({ endedAt: Date.now() })
+    const snapshot = currentSessionDemo.value
+      ? buildInstantDemoSession(loadedResume.value, {
+          sessionId: sessionId.value,
+          startedAt: startedAt.value || Date.now()
+        }).snapshot
+      : buildSessionSnapshot({ endedAt: Date.now() })
     persistSession({ ...snapshot, recordingStatus: 'finalizing' })
     setReportProgress('report', 86, '报告归档中', '正在生成PDF、TXT并保存到面试时间戳文件夹。')
     const report = await saveFinalReport(snapshot)
@@ -595,11 +600,11 @@ function runDemoScript() {
   })
 }
 
-function buildInstantDemoSession(resume = loadedResume.value) {
+function buildInstantDemoSession(resume = loadedResume.value, options = {}) {
   const profile = buildResumeProfile(resume)
-  const turns = buildDemoTurns().slice(0, 4)
-  const createdAt = Date.now()
-  const demoSessionId = `demo-report-${createdAt}`
+  const turns = buildFullDemoTurns(resume)
+  const createdAt = options.startedAt || Date.now()
+  const demoSessionId = options.sessionId || `demo-report-${createdAt}`
   const demoFinals = []
   const demoAnalyses = []
   const demoMessages = [{
@@ -648,6 +653,8 @@ function buildInstantDemoSession(resume = loadedResume.value) {
     endedAtText: formatDateTime(endedAt),
     elapsedTime: formatElapsed(endedAt - createdAt),
     demoMode: true,
+    fullDemoReport: true,
+    demoTurns: turns.length,
     resume,
     finals: demoFinals.map(normalizeTranscriptEntry),
     messages: demoMessages,
@@ -700,8 +707,51 @@ function createDemoFinalEntry({ id, text, speaker, label, time }) {
   }
 }
 
-function buildDemoTurns() {
-  const profile = buildResumeProfile(loadedResume.value)
+function buildFullDemoTurns(resume = loadedResume.value) {
+  const profile = buildResumeProfile(resume)
+  const turns = buildDemoTurns(resume)
+  const jobName = profile.targetRole || profile.position || '目标岗位'
+  const company = profile.company || '上一家公司'
+  const skillsText = profile.skills.slice(0, 4).join('、') || '岗位相关技能'
+
+  const extraTurns = [
+    {
+      id: 'demo-work-detail',
+      question: `请再展开说一个你在${company}最能体现个人贡献的具体案例。`,
+      expectedKeywords: [company, '个人贡献', '结果复盘', '协作边界'].filter(Boolean),
+      sampleAnswers: [
+        `我印象比较深的是在${company}处理过一次跨流程协作任务，时间比较紧，但需要保证结果准确。`,
+        `我先把任务拆成资料确认、过程跟进、结果复核三个节点，再逐项确认责任人和截止时间。`,
+        '最终这个事项按时完成，也沉淀了一套后续可以复用的检查清单，减少了同类问题重复沟通。'
+      ]
+    },
+    {
+      id: 'demo-pressure',
+      question: '如果业务方临时调整需求，同时交付时间不变，你会怎么处理？',
+      expectedKeywords: ['优先级', '沟通确认', '风险提示', '二次核验'],
+      sampleAnswers: [
+        '我会先确认调整后的目标是否影响关键交付，如果影响范围较大，会第一时间把风险和可选方案同步出来。',
+        '接着按优先级处理必须完成的内容，对暂时无法确认的信息做标记，并保留沟通过程和判断依据。',
+        '交付前我会做一次二次核验，确保关键数据和结论没有因为赶时间出现偏差。'
+      ]
+    },
+    {
+      id: 'demo-onboarding',
+      question: `如果你入职这个${jobName}岗位，前三个月你会怎么开展工作？`,
+      expectedKeywords: [jobName, skillsText, '熟悉流程', '稳定交付', '持续优化'].filter(Boolean),
+      sampleAnswers: [
+        '第一个月我会先熟悉业务流程、团队分工和历史资料，把岗位要求和交付标准对齐。',
+        `第二个月会把已有经验和${skillsText}结合起来，稳定完成日常工作，并主动记录可优化的问题。`,
+        '第三个月希望能在稳定交付的基础上承担一部分流程优化或专项任务，让团队看到更明确的结果。'
+      ]
+    }
+  ]
+
+  return [...turns, ...extraTurns]
+}
+
+function buildDemoTurns(resume = loadedResume.value) {
+  const profile = buildResumeProfile(resume)
   if (!profile.hasResume) return mockInterviewScenario.questions
 
   const jobName = profile.targetRole || profile.position || '目标岗位'

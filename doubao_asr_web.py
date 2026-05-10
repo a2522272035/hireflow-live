@@ -842,6 +842,14 @@ def fallback_final_assessment(snapshot: dict) -> dict:
     correct_count = sum(1 for item in analyses if isinstance(item, dict) and item.get("is_correct") is True)
     risk_count = sum(1 for item in analyses if isinstance(item, dict) and item.get("is_correct") is False)
     doubt_count = sum(len(item.get("doubts") or []) for item in analyses if isinstance(item, dict))
+    is_demo_mode = bool(snapshot.get("demoMode"))
+    work_year_number = 0.0
+    work_year_match = re.search(r"\d+(?:\.\d+)?", work_year)
+    if work_year_match:
+        try:
+            work_year_number = float(work_year_match.group(0))
+        except Exception:
+            work_year_number = 0.0
 
     base = 68
     base += min(correct_count * 4, 12)
@@ -857,7 +865,17 @@ def fallback_final_assessment(snapshot: dict) -> dict:
         base += min(len(experiences), 3)
     if not transcript_text:
         base = 45
-    total_score = clamp_score(base)
+    if is_demo_mode and transcript_text:
+        demo_base = 82
+        demo_base += min(correct_count, 5)
+        demo_base += 2 if resume else 0
+        demo_base += 2 if work_year_number >= 5 else 0
+        demo_base += 1 if len(skills) >= 5 else 0
+        demo_base += 1 if experiences else 0
+        demo_base -= min(risk_count * 3 + max(doubt_count - 8, 0), 6)
+        total_score = max(80, min(89, clamp_score(demo_base)))
+    else:
+        total_score = clamp_score(base)
 
     dimension_seed = {
         "岗位匹配度": total_score + (4 if correct_count else -3),
@@ -870,6 +888,16 @@ def fallback_final_assessment(snapshot: dict) -> dict:
     if resume:
         dimension_seed["岗位匹配度"] += 5
         dimension_seed["经验真实性"] += 3 if experiences else 0
+    if is_demo_mode and transcript_text:
+        has_data_signal = bool(re.search(r"\d|%|百分|数据|指标|复核|准确|流程|交付", transcript_text))
+        dimension_seed = {
+            "岗位匹配度": total_score + (4 if resume else 1),
+            "表达清晰度": total_score + (2 if len(transcript_text) >= 220 else -2),
+            "逻辑结构": total_score - 2,
+            "经验真实性": total_score - (4 if doubt_count else 1),
+            "数据意识": total_score + (2 if has_data_signal else -3),
+            "风险控制": total_score - min(6 + risk_count * 4, 10),
+        }
     dimensions = [
         {
             "name": name,
@@ -1006,6 +1034,8 @@ def explain_resume_term(payload: dict) -> str:
 
 def generate_final_assessment(snapshot: dict) -> dict:
     fallback = fallback_final_assessment(snapshot)
+    if snapshot.get("demoMode"):
+        return fallback
     if not os.getenv("DEEPSEEK_API_KEY"):
         return fallback
 
