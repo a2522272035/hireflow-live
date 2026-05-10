@@ -87,6 +87,82 @@
       :resume="loadedResume"
       @close="resumeViewerOpen = false"
     />
+
+    <section v-if="completedReport" class="report-complete-backdrop" aria-live="polite">
+      <div class="report-complete-card">
+        <div class="report-complete-head">
+          <div>
+            <span>报告已生成</span>
+            <h2>{{ completedReport.snapshot.jobTitle || '面试报告' }}</h2>
+          </div>
+          <button type="button" class="icon-close" aria-label="关闭" @click="closeCompletedReport">×</button>
+        </div>
+
+        <div class="report-summary-grid">
+          <div>
+            <small>候选人</small>
+            <strong>{{ reportCandidateName }}</strong>
+          </div>
+          <div>
+            <small>面试时长</small>
+            <strong>{{ completedReport.snapshot.elapsedTime || '00:00:00' }}</strong>
+          </div>
+          <div>
+            <small>综合评分</small>
+            <strong>{{ completedReport.report.assessment?.total_score || '--' }} 分</strong>
+          </div>
+        </div>
+
+        <div class="report-file-row">
+          <span>PDF</span>
+          <p>{{ completedReport.report.pdf_path }}</p>
+        </div>
+
+        <div class="wecom-send-panel">
+          <div class="wecom-send-title">
+            <span>企业微信发送</span>
+            <p>选择接收人后，将这份 PDF 报告发送到企业微信自建应用。</p>
+          </div>
+
+          <div class="recipient-row">
+            <label>
+              接收人
+              <select v-model="selectedWecomUser">
+                <option value="">请选择接收人</option>
+                <option
+                  v-for="recipient in wecomRecipients"
+                  :key="recipient.userId"
+                  :value="recipient.userId"
+                >
+                  {{ recipient.name }}（{{ recipient.userId }}）
+                </option>
+                <option value="__custom">手动输入 UserID</option>
+              </select>
+            </label>
+            <label v-if="selectedWecomUser === '__custom'">
+              UserID
+              <input v-model.trim="customWecomUser" placeholder="企业微信成员 UserID" />
+            </label>
+          </div>
+
+          <p v-if="wecomSendStatus" class="wecom-send-status" :class="{ error: wecomSendStatusType === 'error' }">
+            {{ wecomSendStatus }}
+          </p>
+
+          <div class="report-actions">
+            <button type="button" class="secondary-button" @click="closeCompletedReport">稍后发送</button>
+            <button
+              type="button"
+              class="primary-button"
+              :disabled="!canSendWecomReport || sendingWecom"
+              @click="sendCompletedReportToWecom"
+            >
+              {{ sendingWecom ? '发送中...' : '发送到企业微信' }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </section>
   </main>
 </template>
 
@@ -111,6 +187,13 @@ const resumeViewerOpen = ref(false)
 const hasStartedInterview = ref(false)
 const testModeRunning = ref(false)
 const currentSessionDemo = ref(false)
+const completedReport = ref(null)
+const wecomRecipients = ref([])
+const selectedWecomUser = ref('')
+const customWecomUser = ref('')
+const sendingWecom = ref(false)
+const wecomSendStatus = ref('')
+const wecomSendStatusType = ref('info')
 const reportProgress = ref({
   visible: false,
   step: 'transcript',
@@ -159,6 +242,15 @@ const displayJobTitle = computed(() => {
     : '运营专员（平台运营方向）'
 })
 const demoButtonText = computed(() => testModeRunning.value ? '停止演示' : '演示测试')
+const reportCandidateName = computed(() => {
+  const resume = completedReport.value?.snapshot?.resume
+  return resume?.name || completedReport.value?.report?.assessment?.candidate_name || '候选人'
+})
+const targetWecomUser = computed(() => {
+  if (selectedWecomUser.value === '__custom') return customWecomUser.value.trim()
+  return selectedWecomUser.value.trim()
+})
+const canSendWecomReport = computed(() => Boolean(completedReport.value?.report?.pdf_path && targetWecomUser.value))
 const workflowProgress = computed(() => {
   if (reportProgress.value.visible) return normalizeProgress(reportProgress.value)
   if (aiLoading.value) {
@@ -214,6 +306,7 @@ async function setMode(mode) {
 
 onMounted(() => {
   restoreSavedSession()
+  loadWecomRecipients()
   clockTimer = window.setInterval(() => { now.value = Date.now() }, 1000)
 })
 
@@ -316,18 +409,10 @@ async function finishInterview() {
     const report = await saveFinalReport(snapshot)
     setReportProgress('done', 100, '报告已生成', '面试资料已归档完成。')
     persistCompletedSession(snapshot, report)
-    const savedFiles = [
-      report.folder_path ? `保存目录：${report.folder_path}` : '',
-      `PDF报告：${report.pdf_path}`,
-      report.audio_path ? `录音文件：${report.audio_path}` : '',
-      report.transcript_path ? `角色转写文本：${report.transcript_path}` : '',
-      report.realtime_transcript_path ? `实时原始转写：${report.realtime_transcript_path}` : '',
-      report.diarization_path ? `豆包说话人识别结果：${report.diarization_path}` : '',
-      report.diarization_error_path ? `说话人分离错误说明：${report.diarization_error_path}` : '',
-      `说话人分离：${report.diarization_status === 'running' ? '后台处理中，完成后会在同一文件夹生成角色转写文件' : report.speaker_calibrated ? '已完成' : '未完成，已保存实时原始转写和错误说明'}`,
-      formatWecomPush(report.wecom_push)
-    ].filter(Boolean).join('\n')
-    window.alert(`面试文件已保存：\n${savedFiles}`)
+    completedReport.value = { snapshot, report }
+    prepareWecomDefaultRecipient()
+    wecomSendStatus.value = formatWecomPush(report.wecom_push)
+    wecomSendStatusType.value = 'info'
     resetInterview()
   } catch (error) {
     recordingStatus.value = 'stopped'
@@ -401,6 +486,64 @@ function formatWecomPush(push) {
     return `企业微信推送：未执行（${push.reason || '配置不完整'}）`
   }
   return ''
+}
+
+async function loadWecomRecipients() {
+  try {
+    const response = await fetch('/api/wecom/recipients')
+    if (!response.ok) return
+    const data = await response.json()
+    wecomRecipients.value = Array.isArray(data.recipients) ? data.recipients : []
+    prepareWecomDefaultRecipient()
+  } catch (error) {
+    console.warn('[WeCom] 接收人列表读取失败:', error)
+  }
+}
+
+function prepareWecomDefaultRecipient() {
+  if (selectedWecomUser.value) return
+  if (wecomRecipients.value.length === 1) {
+    selectedWecomUser.value = wecomRecipients.value[0].userId
+  } else if (wecomRecipients.value.length === 0) {
+    selectedWecomUser.value = '__custom'
+  }
+}
+
+async function sendCompletedReportToWecom() {
+  if (!canSendWecomReport.value || sendingWecom.value) return
+  sendingWecom.value = true
+  wecomSendStatus.value = '正在发送企业微信文件...'
+  wecomSendStatusType.value = 'info'
+  try {
+    const response = await fetch('/api/wecom/send-report', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        pdf_path: completedReport.value.report.pdf_path,
+        touser: targetWecomUser.value,
+        resume: completedReport.value.snapshot.resume
+      })
+    })
+    const data = await response.json().catch(() => ({}))
+    if (!response.ok) {
+      throw new Error(data.error || data.wecom_push?.error || data.wecom_push?.reason || '企业微信发送失败')
+    }
+    completedReport.value.report.wecom_push = data.wecom_push
+    wecomSendStatus.value = formatWecomPush(data.wecom_push) || '企业微信推送：已发送'
+    wecomSendStatusType.value = 'success'
+  } catch (error) {
+    wecomSendStatus.value = `企业微信推送失败：${error.message}`
+    wecomSendStatusType.value = 'error'
+  } finally {
+    sendingWecom.value = false
+  }
+}
+
+function closeCompletedReport() {
+  completedReport.value = null
+  wecomSendStatus.value = ''
+  wecomSendStatusType.value = 'info'
+  if (selectedWecomUser.value === '__custom') customWecomUser.value = ''
 }
 
 function wait(ms) {

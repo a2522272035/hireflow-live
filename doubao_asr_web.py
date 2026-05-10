@@ -991,10 +991,11 @@ def explain_resume_term(payload: dict) -> str:
     category = str(payload.get("category") or "").strip()
     context = str(payload.get("context") or "").strip()
     resume = payload.get("resume") if isinstance(payload.get("resume"), dict) else {}
+    force_ai = bool(payload.get("force_ai") or payload.get("forceAi"))
     if not term:
         return "未提供需要解释的术语。"
     local_explanation = local_resume_term_explanation(term)
-    if local_explanation:
+    if local_explanation and not force_ai:
         return local_explanation
     if not os.getenv("DEEPSEEK_API_KEY"):
         return (
@@ -1005,11 +1006,11 @@ def explain_resume_term(payload: dict) -> str:
     system_prompt = """
 你是面试助手里的简历术语科普解释器。请用中文解释一个简历中的技术名词/职业标签。
 要求：
-- 先讲清楚它是什么、干什么用、常见应用场景；
-- 再说明它在简历里通常代表什么经验或能力；
-- 给出 1 个适合面试官继续追问的问题；
+- 先用一句话讲清楚它是什么、干什么用；
+- 再补充它在工作中的常见应用场景；
+- 最后给出 1 个适合面试官继续追问的问题；
 - 不要只说“用于判断候选人能力”这种模板话；
-- 100 到 220 字，通俗易懂；
+- 80 到 140 字，通俗易懂；
 - 不要 Markdown，不要列表编号。
 """.strip()
     user_content = {
@@ -1024,7 +1025,7 @@ def explain_resume_term(payload: dict) -> str:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": json.dumps(user_content, ensure_ascii=False)},
             ],
-            max_tokens=260,
+            max_tokens=180,
             temperature=0.2,
             timeout=int(os.getenv("TERM_EXPLAIN_TIMEOUT_SECONDS", "8")),
         ).strip()
@@ -1653,14 +1654,94 @@ def safe_wecom_report_name(pdf_path: Path, snapshot: dict) -> str:
     return name or pdf_path.name
 
 
-def push_report_to_wecom(snapshot: dict, report: dict) -> dict:
+def parse_wecom_recipients() -> list[dict]:
+    raw = (os.getenv("WECOM_REPORT_RECIPIENTS") or "").strip()
+    recipients: list[dict] = []
+    if raw:
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            parsed = None
+        if isinstance(parsed, list):
+            for item in parsed:
+                if isinstance(item, dict):
+                    user_id = str(item.get("userId") or item.get("userid") or item.get("id") or "").strip()
+                    name = str(item.get("name") or item.get("label") or user_id).strip()
+                    if user_id:
+                        recipients.append({"name": name or user_id, "userId": user_id})
+                else:
+                    user_id = str(item or "").strip()
+                    if user_id:
+                        recipients.append({"name": user_id, "userId": user_id})
+        else:
+            for chunk in re.split(r"[,，\n]+", raw):
+                item = chunk.strip()
+                if not item:
+                    continue
+                if ":" in item:
+                    name, user_id = item.split(":", 1)
+                elif "=" in item:
+                    name, user_id = item.split("=", 1)
+                else:
+                    name = user_id = item
+                user_id = user_id.strip()
+                if user_id:
+                    recipients.append({"name": name.strip() or user_id, "userId": user_id})
+
+    fallback = (os.getenv("WECOM_REPORT_TOUSER") or os.getenv("WECOM_TOUSER") or "").strip()
+    for user_id in [item.strip() for item in fallback.split("|") if item.strip()]:
+        if not any(item["userId"] == user_id for item in recipients):
+            recipients.append({"name": user_id, "userId": user_id})
+    return recipients
+
+
+def wecom_config_summary() -> dict:
+    return {
+        "enabled": bool(
+            os.getenv("WECOM_SEND_API_KEY")
+            or os.getenv("WECOM_REPORT_API_KEY")
+            or os.getenv("SEND_API_KEY")
+            or os.getenv("WECOM_REPORT_DROP_DIR")
+        ),
+        "send_url": (
+            os.getenv("WECOM_SEND_FILE_URL")
+            or os.getenv("WECOM_REPORT_SEND_FILE_URL")
+            or "http://127.0.0.1:6221/wechat/send-file"
+        ),
+        "has_api_key": bool(
+            os.getenv("WECOM_SEND_API_KEY")
+            or os.getenv("WECOM_REPORT_API_KEY")
+            or os.getenv("SEND_API_KEY")
+        ),
+        "drop_dir": os.getenv("WECOM_REPORT_DROP_DIR") or "",
+        "recipients": parse_wecom_recipients(),
+    }
+
+
+def resolve_report_pdf_for_sending(pdf_path_value: str) -> Path:
+    pdf_path = Path(str(pdf_path_value or "").strip())
+    if not pdf_path.is_absolute():
+        pdf_path = report_root_dir() / pdf_path
+    pdf_path = pdf_path.resolve()
+    root = report_root_dir().resolve()
+    if pdf_path.suffix.lower() != ".pdf":
+        raise RuntimeError("只能发送 PDF 报告文件")
+    if pdf_path != root and not str(pdf_path).startswith(str(root) + os.sep):
+        raise RuntimeError(f"报告必须位于归档目录内: {root}")
+    if not pdf_path.is_file():
+        raise RuntimeError(f"报告文件不存在: {pdf_path}")
+    return pdf_path
+
+
+def push_report_to_wecom(snapshot: dict, report: dict, touser_override: str = "", force: bool = False) -> dict:
     pdf_value = report.get("pdf_path") or ""
     pdf_path = Path(pdf_value)
     if not pdf_value or not pdf_path.is_file():
         return {"enabled": False, "status": "skipped", "reason": "missing pdf"}
 
     touser = (
-        os.getenv("WECOM_REPORT_TOUSER")
+        touser_override
+        or os.getenv("WECOM_REPORT_TOUSER")
         or os.getenv("WECOM_TOUSER")
         or ""
     ).strip()
@@ -1676,7 +1757,7 @@ def push_report_to_wecom(snapshot: dict, report: dict) -> dict:
         or ""
     ).strip()
     drop_dir_value = (os.getenv("WECOM_REPORT_DROP_DIR") or "").strip()
-    enabled = truthy_env("WECOM_REPORT_ENABLED", False) or bool(touser or api_key or drop_dir_value)
+    enabled = force or truthy_env("WECOM_REPORT_ENABLED", False) or bool(touser or api_key or drop_dir_value)
     if not enabled:
         return {"enabled": False, "status": "disabled"}
 
@@ -1769,8 +1850,8 @@ def create_final_report(snapshot: dict, calibrated: dict | None = None) -> dict:
         ),
         "speaker_calibrated": bool(calibrated.get("speaker_calibrated")),
         "assessment": assessment,
+        "wecom_push": {"enabled": False, "status": "pending"},
     }
-    report["wecom_push"] = push_report_to_wecom(snapshot, report)
     return report
 
 
@@ -2955,6 +3036,8 @@ def make_http_handler(session: DoubaoSession):
                         "resource_id": os.getenv("DOUBAO_RESOURCE_ID"),
                     },
                 )
+            elif path.path == "/api/wecom/recipients":
+                self.send_json(HTTPStatus.OK, {"status": "success", **wecom_config_summary()})
             else:
                 if self.serve_dist(path.path):
                     return
@@ -3104,6 +3187,25 @@ def make_http_handler(session: DoubaoSession):
                 except Exception as exc:
                     import traceback
                     traceback.print_exc()
+                    self.send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": str(exc)})
+            elif self.path == "/api/wecom/send-report":
+                length = int(self.headers.get("Content-Length", "0") or "0")
+                try:
+                    payload = json.loads(self.rfile.read(length).decode("utf-8") or "{}")
+                    touser = str(payload.get("touser") or "").strip()
+                    if not touser:
+                        self.send_json(HTTPStatus.BAD_REQUEST, {"error": "请选择企业微信接收人"})
+                        return
+                    pdf_path = resolve_report_pdf_for_sending(str(payload.get("pdf_path") or ""))
+                    result = push_report_to_wecom(
+                        {"resume": payload.get("resume") if isinstance(payload.get("resume"), dict) else {}},
+                        {"pdf_path": str(pdf_path)},
+                        touser_override=touser,
+                        force=True,
+                    )
+                    status = HTTPStatus.OK if result.get("status") == "sent" else HTTPStatus.BAD_GATEWAY
+                    self.send_json(status, {"status": "success" if result.get("status") == "sent" else "failed", "wecom_push": result})
+                except Exception as exc:
                     self.send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": str(exc)})
             elif self.path == "/api/mode":
                 length = int(self.headers.get("Content-Length", "0") or "0")

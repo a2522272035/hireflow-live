@@ -36,13 +36,12 @@ REPORT_OUTPUT_DIR=D:\FS
 
 不要把 `.env` 提交到仓库。
 
-企业微信推送使用 `D:\work\wecom` 项目已有的 `/wechat/send-file` 接口，不在 HireFlow 内重复维护企业微信 token 逻辑。需要推送时填写：
+企业微信推送使用 `D:\work\wecom` 项目已有的 `/wechat/send-file` 接口，不在 HireFlow 内重复维护企业微信 token 逻辑。报告生成后会弹出完成面板，选择接收人后再手动发送。需要填写：
 
 ```text
-WECOM_REPORT_ENABLED=true
-WECOM_REPORT_TOUSER=企业微信成员UserID
 WECOM_SEND_FILE_URL=https://你的企业微信服务域名/wechat/send-file
 WECOM_SEND_API_KEY=你的wecom服务SEND_API_KEY
+WECOM_REPORT_RECIPIENTS=张三:zhangsan,李四:lisi
 ```
 
 如果企业微信服务只允许发送固定目录里的文件，可以再配置：

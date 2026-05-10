@@ -957,6 +957,7 @@ async function askAiForTerm() {
         term: termCard.value.term,
         category: termCard.value.category,
         context: termCard.value.context,
+        force_ai: true,
         resume: {
           name: profile.value.name,
           position: profile.value.position,
