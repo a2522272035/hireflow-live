@@ -1571,6 +1571,177 @@ def build_pdf_report(snapshot: dict, assessment: dict, pdf_path: Path) -> None:
     doc.build(story, onFirstPage=on_page, onLaterPages=on_page)
 
 
+def truthy_env(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return str(value).strip().lower() in ("1", "true", "yes", "y", "on")
+
+
+def read_json_response(response) -> dict:
+    raw = response.read().decode("utf-8", errors="replace")
+    try:
+        parsed = json.loads(raw) if raw else {}
+    except json.JSONDecodeError:
+        parsed = {"raw": raw}
+    if not isinstance(parsed, dict):
+        parsed = {"data": parsed}
+    return {
+        "http_status": getattr(response, "status", 0),
+        "response": parsed,
+        "raw": raw,
+        "ok": bool(parsed.get("ok")) or parsed.get("errcode") == 0,
+    }
+
+
+def post_wecom_json(url: str, api_key: str, payload: dict, timeout: int) -> dict:
+    headers = {
+        "Content-Type": "application/json",
+        "X-API-Key": api_key,
+    }
+    req = urllib.request.Request(
+        url,
+        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        headers=headers,
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=timeout) as response:
+        return read_json_response(response)
+
+
+def post_wecom_file(url: str, api_key: str, touser: str, file_path: Path, safe: str, timeout: int) -> dict:
+    boundary = f"----HireFlow{uuid.uuid4().hex}"
+    file_name = file_path.name
+    mime_type = mimetypes.guess_type(file_name)[0] or "application/octet-stream"
+    parts: list[bytes] = []
+    for name, value in (("touser", touser), ("safe", safe)):
+        parts.append(
+            (
+                f"--{boundary}\r\n"
+                f'Content-Disposition: form-data; name="{name}"\r\n\r\n'
+                f"{value}\r\n"
+            ).encode("utf-8")
+        )
+    parts.append(
+        (
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="file"; filename="{file_name}"\r\n'
+            f"Content-Type: {mime_type}\r\n\r\n"
+        ).encode("utf-8")
+    )
+    parts.append(file_path.read_bytes())
+    parts.append(f"\r\n--{boundary}--\r\n".encode("utf-8"))
+    body = b"".join(parts)
+    headers = {
+        "Content-Type": f"multipart/form-data; boundary={boundary}",
+        "Content-Length": str(len(body)),
+        "X-API-Key": api_key,
+    }
+    req = urllib.request.Request(url, data=body, headers=headers, method="POST")
+    with urllib.request.urlopen(req, timeout=timeout) as response:
+        return read_json_response(response)
+
+
+def safe_wecom_report_name(pdf_path: Path, snapshot: dict) -> str:
+    candidate = ""
+    resume = snapshot.get("resume")
+    if isinstance(resume, dict):
+        candidate = str(resume.get("name") or "").strip()
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    name = f"HireFlow_Report_{candidate}_{timestamp}.pdf" if candidate else pdf_path.name
+    name = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', "_", name).strip(" .")
+    return name or pdf_path.name
+
+
+def push_report_to_wecom(snapshot: dict, report: dict) -> dict:
+    pdf_value = report.get("pdf_path") or ""
+    pdf_path = Path(pdf_value)
+    if not pdf_value or not pdf_path.is_file():
+        return {"enabled": False, "status": "skipped", "reason": "missing pdf"}
+
+    touser = (
+        os.getenv("WECOM_REPORT_TOUSER")
+        or os.getenv("WECOM_TOUSER")
+        or ""
+    ).strip()
+    send_url = (
+        os.getenv("WECOM_SEND_FILE_URL")
+        or os.getenv("WECOM_REPORT_SEND_FILE_URL")
+        or "http://127.0.0.1:6221/wechat/send-file"
+    ).strip()
+    api_key = (
+        os.getenv("WECOM_SEND_API_KEY")
+        or os.getenv("WECOM_REPORT_API_KEY")
+        or os.getenv("SEND_API_KEY")
+        or ""
+    ).strip()
+    drop_dir_value = (os.getenv("WECOM_REPORT_DROP_DIR") or "").strip()
+    enabled = truthy_env("WECOM_REPORT_ENABLED", False) or bool(touser or api_key or drop_dir_value)
+    if not enabled:
+        return {"enabled": False, "status": "disabled"}
+
+    copied_path = ""
+    send_file_name = pdf_path.name
+    try:
+        if drop_dir_value:
+            drop_dir = Path(drop_dir_value)
+            drop_dir.mkdir(parents=True, exist_ok=True)
+            send_file_name = safe_wecom_report_name(pdf_path, snapshot)
+            target_path = drop_dir / send_file_name
+            shutil.copy2(pdf_path, target_path)
+            copied_path = str(target_path)
+
+        if not touser:
+            return {
+                "enabled": True,
+                "status": "copied" if copied_path else "skipped",
+                "reason": "missing WECOM_REPORT_TOUSER",
+                "copied_path": copied_path,
+            }
+        if not api_key:
+            return {
+                "enabled": True,
+                "status": "copied" if copied_path else "skipped",
+                "reason": "missing WECOM_SEND_API_KEY",
+                "copied_path": copied_path,
+                "touser": touser,
+            }
+
+        safe = str(os.getenv("WECOM_REPORT_SAFE", "0")).strip() or "0"
+        timeout = int(os.getenv("WECOM_REPORT_SEND_TIMEOUT_SECONDS", "60"))
+        if copied_path and truthy_env("WECOM_REPORT_SEND_BY_FILENAME", True):
+            result = post_wecom_json(
+                send_url,
+                api_key,
+                {"touser": touser, "filename": send_file_name, "safe": safe},
+                timeout,
+            )
+            method = "filename"
+        else:
+            result = post_wecom_file(send_url, api_key, touser, pdf_path, safe, timeout)
+            method = "upload"
+
+        return {
+            "enabled": True,
+            "status": "sent" if result.get("ok") else "failed",
+            "method": method,
+            "touser": touser,
+            "url": send_url,
+            "copied_path": copied_path,
+            "file_name": send_file_name,
+            "result": result,
+        }
+    except Exception as exc:
+        return {
+            "enabled": True,
+            "status": "failed",
+            "error": str(exc),
+            "touser": touser,
+            "url": send_url,
+            "copied_path": copied_path,
+        }
+
+
 def create_final_report(snapshot: dict, calibrated: dict | None = None) -> dict:
     output_dir = resolve_interview_output_dir(snapshot)
     audio_path = "" if snapshot.get("demoMode") else move_audio_into_directory(snapshot.get("audio_path") or "", output_dir)
@@ -1584,7 +1755,7 @@ def create_final_report(snapshot: dict, calibrated: dict | None = None) -> dict:
     assessment = generate_final_assessment(snapshot)
     pdf_path = output_dir / safe_report_filename(snapshot)
     build_pdf_report(snapshot, assessment, pdf_path)
-    return {
+    report = {
         "folder_path": str(output_dir),
         "pdf_path": str(pdf_path),
         "audio_path": audio_path or "",
@@ -1599,6 +1770,8 @@ def create_final_report(snapshot: dict, calibrated: dict | None = None) -> dict:
         "speaker_calibrated": bool(calibrated.get("speaker_calibrated")),
         "assessment": assessment,
     }
+    report["wecom_push"] = push_report_to_wecom(snapshot, report)
+    return report
 
 
 def output_dir() -> Path:

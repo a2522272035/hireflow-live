@@ -324,7 +324,8 @@ async function finishInterview() {
       report.realtime_transcript_path ? `实时原始转写：${report.realtime_transcript_path}` : '',
       report.diarization_path ? `豆包说话人识别结果：${report.diarization_path}` : '',
       report.diarization_error_path ? `说话人分离错误说明：${report.diarization_error_path}` : '',
-      `说话人分离：${report.diarization_status === 'running' ? '后台处理中，完成后会在同一文件夹生成角色转写文件' : report.speaker_calibrated ? '已完成' : '未完成，已保存实时原始转写和错误说明'}`
+      `说话人分离：${report.diarization_status === 'running' ? '后台处理中，完成后会在同一文件夹生成角色转写文件' : report.speaker_calibrated ? '已完成' : '未完成，已保存实时原始转写和错误说明'}`,
+      formatWecomPush(report.wecom_push)
     ].filter(Boolean).join('\n')
     window.alert(`面试文件已保存：\n${savedFiles}`)
     resetInterview()
@@ -382,6 +383,24 @@ async function saveFinalReport(snapshot) {
   })
   if (!response.ok) throw new Error(await response.text())
   return response.json()
+}
+
+function formatWecomPush(push) {
+  if (!push || push.enabled === false || push.status === 'disabled') return ''
+  if (push.status === 'sent') {
+    return `企业微信推送：已发送给 ${push.touser || '指定用户'}`
+  }
+  if (push.status === 'copied') {
+    const suffix = push.reason ? `，未自动发送（${push.reason}）` : ''
+    return `企业微信推送：已放入发送目录 ${push.copied_path || ''}${suffix}`
+  }
+  if (push.status === 'failed') {
+    return `企业微信推送：失败（${push.error || push.reason || '请检查企业微信服务配置'}）`
+  }
+  if (push.status === 'skipped') {
+    return `企业微信推送：未执行（${push.reason || '配置不完整'}）`
+  }
+  return ''
 }
 
 function wait(ms) {
