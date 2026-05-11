@@ -696,6 +696,78 @@ def compact_text(value: Any, limit: int = 5000) -> str:
     return text[:limit]
 
 
+def first_resume_value(resume: dict, *keys: str) -> str:
+    for key in keys:
+        value = resume.get(key)
+        if value not in (None, "", []):
+            return str(value).strip()
+    return ""
+
+
+def resume_work_items(resume: dict) -> list[dict]:
+    for key in ("experiences", "work_experience", "job_exp_objs"):
+        value = resume.get(key)
+        if isinstance(value, list):
+            return [item for item in value if isinstance(item, dict)]
+    return []
+
+
+def build_resume_key_points(resume: dict, target_role: str = "") -> list[str]:
+    if not isinstance(resume, dict) or not resume:
+        return []
+    points: list[str] = []
+    work_year = first_resume_value(resume, "work_year_norm", "work_year")
+    current_position = first_resume_value(resume, "work_position", "current_position", "position")
+    expected_job = first_resume_value(resume, "expect_job", "expected_job")
+    company = first_resume_value(resume, "work_company", "current_company")
+    degree = first_resume_value(resume, "degree")
+    college = first_resume_value(resume, "college", "school")
+    major = first_resume_value(resume, "major")
+    skills = resume.get("skills") if isinstance(resume.get("skills"), list) else []
+    works = resume_work_items(resume)
+
+    role_text = expected_job or current_position or target_role
+    if role_text:
+        points.append(f"岗位方向：{role_text}。")
+    if work_year or company or current_position:
+        current = "、".join(item for item in [company, current_position, f"{work_year}经验" if work_year else ""] if item)
+        points.append(f"近期职业背景：{current}。")
+    if degree or college or major:
+        points.append(f"教育背景：{'、'.join(item for item in [college, degree, major] if item)}。")
+    if skills:
+        points.append(f"关键技能/标签：{'、'.join(str(item) for item in skills[:10])}。")
+    if works:
+        latest = works[0]
+        title = " / ".join(
+            str(part)
+            for part in [
+                latest.get("company"),
+                latest.get("title") or latest.get("position"),
+                latest.get("duration") or latest.get("start_date"),
+            ]
+            if part
+        )
+        if title:
+            points.append(f"主要经历：{title}。")
+    summary = compact_resume_text(resume.get("summary") or "", 180)
+    if summary:
+        points.append(f"自我评价摘要：{summary}")
+    return points[:6]
+
+
+def hiring_grade(score: int) -> str:
+    score = clamp_score(score)
+    if score >= 90:
+        return "强烈推荐"
+    if score >= 80:
+        return "推荐进入下一轮"
+    if score >= 70:
+        return "可进入复核"
+    if score >= 60:
+        return "谨慎考虑"
+    return "暂不推荐"
+
+
 def fallback_speaker_role(text: str) -> dict:
     cleaned = re.sub(r"\s+", "", str(text or ""))
     if not cleaned:
@@ -829,6 +901,7 @@ def fallback_final_assessment(snapshot: dict) -> dict:
         or snapshot.get("jobTitle")
         or "目标岗位"
     ).strip()
+    job_requirements = str(snapshot.get("jobRequirements") or snapshot.get("jobTitle") or target_role or "目标岗位").strip()
     work_year = str(resume.get("work_year_norm") or resume.get("work_year") or "").strip()
     degree = str(resume.get("degree") or "").strip()
     college = str(resume.get("college") or "").strip()
@@ -910,6 +983,7 @@ def fallback_final_assessment(snapshot: dict) -> dict:
     strengths = []
     risks = []
     resume_strengths = []
+    key_points = build_resume_key_points(resume, target_role)
     if work_year:
         resume_strengths.append(f"简历显示有{work_year}相关工作经验。")
     if target_role:
@@ -934,7 +1008,7 @@ def fallback_final_assessment(snapshot: dict) -> dict:
         risks.append("面试转写内容不足，报告仅能作为初筛参考。")
 
     return {
-        "summary": f"{candidate_name}围绕{target_role}完成了面试，系统已结合简历与转写生成综合评价。",
+        "summary": f"{candidate_name}围绕{target_role}完成了面试，系统已结合简历关键画像、面试转写与阶段性分析生成综合评价。",
         "detailed_evaluation": (
             f"{candidate_name}的简历背景显示其目标/当前方向为{target_role}。"
             f"{'工作年限约为' + work_year + '，' if work_year else ''}"
@@ -942,10 +1016,18 @@ def fallback_final_assessment(snapshot: dict) -> dict:
             "当前评价主要依据简历结构、问答中的回答完整度、实时分析记录和存疑点数量自动汇总。"
             "建议结合候选人项目细节和背调结果复核。"
         ),
+        "ai_conclusion": (
+            f"AI 结论：结合招聘要求（{job_requirements}）、简历关键背景和面试转写表现，"
+            f"当前给出“{hiring_grade(total_score)}”判断。候选人与岗位方向存在一定匹配度，"
+            "但仍需围绕关键经历真实性、个人贡献边界和数据口径做人工复核。"
+        ),
         "recommendation": "建议进入下一轮人工复核，重点核验简历中关键项目、数据口径和个人贡献边界。",
         "total_score": total_score,
         "star_rating": format_star_rating(total_score),
         "dimensions": dimensions,
+        "resume_key_points": key_points,
+        "job_requirements": job_requirements,
+        "hiring_grade": hiring_grade(total_score),
         "strengths": (resume_strengths + strengths)[:6] or ["已完成基础回答，可继续结合岗位要求复核。"],
         "risks": risks[:8] or ["暂无明确高风险点。"],
         "follow_ups": [q for item in analyses for q in (item.get("questions") or [])][:8],
@@ -956,7 +1038,7 @@ def normalize_final_assessment(raw: dict, fallback: dict) -> dict:
     result = dict(fallback)
     if not isinstance(raw, dict):
         return result
-    for key in ("summary", "detailed_evaluation", "recommendation"):
+    for key in ("summary", "detailed_evaluation", "recommendation", "ai_conclusion", "job_requirements", "hiring_grade"):
         if raw.get(key):
             result[key] = str(raw.get(key))
     result["total_score"] = clamp_score(raw.get("total_score"), result["total_score"])
@@ -979,10 +1061,12 @@ def normalize_final_assessment(raw: dict, fallback: dict) -> dict:
         })
     result["dimensions"] = normalized_dimensions
 
-    for key in ("strengths", "risks", "follow_ups"):
+    for key in ("strengths", "risks", "follow_ups", "resume_key_points"):
         value = raw.get(key)
         if isinstance(value, list):
             result[key] = [str(item) for item in value if str(item).strip()][:8]
+    if not result.get("hiring_grade"):
+        result["hiring_grade"] = hiring_grade(result["total_score"])
     return result
 
 
@@ -1114,14 +1198,18 @@ def generate_final_assessment(snapshot: dict) -> dict:
     if has_analysis_records:
         system_prompt = f"""
 你是面试报告汇总专家。当前项目在面试过程中已经持续调用 AI 做了片段分析，你的任务是把这些既有 AI 分析记录汇总成最终报告，不要从全程转写重新逐句评价。
-优先依据 analysis_records 中的阶段性评价、存疑点和追问建议；简历用于判断岗位匹配和经历背景；transcript 只用于补充上下文和校验角色，不作为重新分析全文的主材料。
+优先依据 analysis_records 中的阶段性评价、存疑点和追问建议；简历只提炼主要信息，不要复述完整简历；招聘要求/岗位信息用于判断匹配度；transcript 只用于补充上下文和校验角色，不作为重新分析全文的主材料。
 如果既有分析记录证据不足，请写“待核验”，不要臆造结论。面试官发言只作为问题背景，不计入候选人能力评分。
-必须只返回 JSON，不要 Markdown。评分维度必须正好包含以下 6 项：{", ".join(REPORT_DIMENSIONS)}。
+必须只返回 JSON，不要 Markdown。评分维度必须正好包含以下 6 项：{", ".join(REPORT_DIMENSIONS)}。结论必须明确基于“招聘要求、简历、面试录音/转写”三类信息。
 JSON 格式：
 {{
   "summary": "一句话简要评价",
   "detailed_evaluation": "面向面试官的个人详细说明，包含能力、经历可信度、表达与岗位匹配",
+  "ai_conclusion": "基于招聘要求、简历和面试录音/转写给出的最终 AI 结论",
   "recommendation": "录用/复试/淘汰建议及理由",
+  "hiring_grade": "强烈推荐/推荐进入下一轮/可进入复核/谨慎考虑/暂不推荐",
+  "job_requirements": "本次招聘要求或岗位要求摘要",
+  "resume_key_points": ["只保留简历主要部分，3-6条"],
   "total_score": 0-100,
   "star_rating": 0-5,
   "dimensions": [
@@ -1134,13 +1222,17 @@ JSON 格式：
 """.strip()
     else:
         system_prompt = f"""
-你是严谨的面试评估专家。请根据候选人简历和全程转写，生成最终面试报告评分。
-必须只返回 JSON，不要 Markdown。评分维度必须正好包含以下 6 项：{", ".join(REPORT_DIMENSIONS)}。
+你是严谨的面试评估专家。请根据候选人简历、招聘要求/岗位信息和全程转写，生成最终面试报告评分。简历只提炼主要信息，不要复述完整简历。
+必须只返回 JSON，不要 Markdown。评分维度必须正好包含以下 6 项：{", ".join(REPORT_DIMENSIONS)}。结论必须明确基于“招聘要求、简历、面试录音/转写”三类信息。
 JSON 格式：
 {{
   "summary": "一句话简要评价",
   "detailed_evaluation": "面向面试官的个人详细说明，包含能力、经历可信度、表达与岗位匹配",
+  "ai_conclusion": "基于招聘要求、简历和面试录音/转写给出的最终 AI 结论",
   "recommendation": "录用/复试/淘汰建议及理由",
+  "hiring_grade": "强烈推荐/推荐进入下一轮/可进入复核/谨慎考虑/暂不推荐",
+  "job_requirements": "本次招聘要求或岗位要求摘要",
+  "resume_key_points": ["只保留简历主要部分，3-6条"],
   "total_score": 0-100,
   "star_rating": 0-5,
   "dimensions": [
@@ -1153,6 +1245,7 @@ JSON 格式：
 """.strip()
     user_content = {
         "jobTitle": snapshot.get("jobTitle"),
+        "jobRequirements": snapshot.get("jobRequirements") or snapshot.get("jobTitle"),
         "interviewer": snapshot.get("interviewer"),
         "resume": resume,
         "summary_mode": "aggregate_existing_ai_analysis" if has_analysis_records else "assess_from_transcript",
@@ -1300,6 +1393,12 @@ def ensure_pdf_fonts():
         r"C:\Windows\Fonts\simhei.ttf",
         r"C:\Windows\Fonts\msyh.ttc",
         r"C:\Windows\Fonts\simsun.ttc",
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.otf",
+        "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+        "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+        "/usr/share/fonts/truetype/arphic/ukai.ttc",
     ]
     for font_path in font_candidates:
         if os.path.exists(font_path):
@@ -1374,6 +1473,8 @@ def build_pdf_report(snapshot: dict, assessment: dict, pdf_path: Path) -> None:
     title = ParagraphStyle("TitleCN", parent=normal, fontSize=22, leading=28, spaceAfter=8, textColor=colors.HexColor("#111827"))
     heading = ParagraphStyle("HeadingCN", parent=normal, fontSize=15, leading=20, spaceBefore=14, spaceAfter=8, textColor=colors.HexColor("#1f2937"))
     subheading = ParagraphStyle("SubheadingCN", parent=normal, fontSize=12, leading=16, spaceBefore=8, spaceAfter=4, textColor=colors.HexColor("#334155"))
+    star_style = ParagraphStyle("StarSmallCN", parent=normal, fontSize=11, leading=14, textColor=colors.HexColor("#f59e0b"))
+    conclusion_style = ParagraphStyle("ConclusionCN", parent=normal, fontSize=11, leading=17, textColor=colors.HexColor("#0f172a"))
 
     def list_block(items: list[str]):
         if not items:
@@ -1381,23 +1482,21 @@ def build_pdf_report(snapshot: dict, assessment: dict, pdf_path: Path) -> None:
         return [paragraph(f"{index + 1}. {item}", normal) for index, item in enumerate(items)]
 
     def add_resume_section():
-        story.append(paragraph("候选人简历摘要", heading))
+        story.append(paragraph("简历关键画像", heading))
         if not resume:
             story.append(paragraph("未上传简历。", small))
             return
 
         basic_items = [
             ("姓名", resume.get("name")),
-            ("电话", resume.get("phone")),
-            ("邮箱", resume.get("email")),
-            ("城市", resume.get("city")),
+            ("城市", resume.get("city") or resume.get("location")),
             ("学历", resume.get("degree")),
             ("学校", resume.get("college")),
             ("专业", resume.get("major")),
-            ("工作年限", resume.get("work_year")),
-            ("当前公司", resume.get("current_company")),
-            ("当前职位", resume.get("current_position")),
-            ("期望岗位", resume.get("expected_job")),
+            ("工作年限", resume.get("work_year_norm") or resume.get("work_year")),
+            ("当前公司", resume.get("work_company") or resume.get("current_company")),
+            ("当前职位", resume.get("work_position") or resume.get("current_position")),
+            ("期望岗位", resume.get("expect_job") or resume.get("expected_job")),
         ]
         basic_rows = [[label, str(value)] for label, value in basic_items if value]
         if basic_rows:
@@ -1416,44 +1515,23 @@ def build_pdf_report(snapshot: dict, assessment: dict, pdf_path: Path) -> None:
             ]))
             story.append(basic_table)
 
-        if resume.get("summary"):
-            story.append(paragraph("个人总结", subheading))
-            story.append(paragraph(compact_resume_text(resume.get("summary"), 800), normal))
-
-        education = resume.get("education") if isinstance(resume.get("education"), list) else []
-        if education:
-            story.append(paragraph("教育经历", subheading))
-            for item in education[:3]:
-                title_text = " / ".join(str(part) for part in [item.get("school"), item.get("major"), item.get("degree")] if part)
-                story.append(paragraph(f"{title_text}  {item.get('duration') or ''}", normal))
-
-        works = resume.get("work_experience") if isinstance(resume.get("work_experience"), list) else []
-        if works:
-            story.append(paragraph("工作经历", subheading))
-            for item in works[:5]:
-                title_text = " / ".join(str(part) for part in [item.get("company"), item.get("position"), item.get("duration")] if part)
-                story.append(paragraph(title_text, normal))
-                if item.get("description"):
-                    story.append(paragraph(compact_resume_text(item.get("description"), 500), small))
-
-        projects = resume.get("projects") if isinstance(resume.get("projects"), list) else []
-        if projects:
-            story.append(paragraph("项目经历", subheading))
-            for item in projects[:4]:
-                story.append(paragraph(f"{item.get('name') or '未命名项目'}  {item.get('duration') or ''}", normal))
-                desc = item.get("responsibility") or item.get("description")
-                if desc:
-                    story.append(paragraph(compact_resume_text(desc, 450), small))
+        key_points = assessment.get("resume_key_points") or build_resume_key_points(
+            resume,
+            snapshot.get("jobTitle") or "",
+        )
+        if key_points:
+            story.append(paragraph("主要部分", subheading))
+            story.extend(list_block(key_points[:6]))
 
         skills = resume.get("skills") if isinstance(resume.get("skills"), list) else []
         if skills:
-            story.append(paragraph("技能", subheading))
-            story.append(paragraph("、".join(str(item) for item in skills[:30]), normal))
+            story.append(paragraph("关键技能", subheading))
+            story.append(paragraph("、".join(str(item) for item in skills[:12]), normal))
 
         certificates = resume.get("certificates") if isinstance(resume.get("certificates"), list) else []
         if certificates:
-            story.append(paragraph("证书", subheading))
-            story.append(paragraph("、".join(str(item) for item in certificates[:20]), normal))
+            story.append(paragraph("关键证书", subheading))
+            story.append(paragraph("、".join(str(item) for item in certificates[:8]), normal))
 
     doc = SimpleDocTemplate(
         str(pdf_path),
@@ -1498,7 +1576,7 @@ def build_pdf_report(snapshot: dict, assessment: dict, pdf_path: Path) -> None:
         [[
             paragraph(f"{assessment['total_score']} 分", ParagraphStyle("ScoreCN", parent=title, fontSize=24, textColor=colors.HexColor("#2563eb"))),
             paragraph(f"{star_text(assessment['star_rating'])}  {assessment['star_rating']}/5", ParagraphStyle("StarCN", parent=title, fontSize=16, textColor=colors.HexColor("#f59e0b"))),
-            paragraph(assessment.get("recommendation") or "", normal),
+            paragraph(f"{assessment.get('hiring_grade') or hiring_grade(assessment['total_score'])}\n{assessment.get('recommendation') or ''}", normal),
         ]],
         colWidths=[34 * mm, 46 * mm, 92 * mm],
     )
@@ -1514,15 +1592,21 @@ def build_pdf_report(snapshot: dict, assessment: dict, pdf_path: Path) -> None:
     ]))
     story.append(score_table)
     story.append(paragraph(assessment.get("summary") or "", normal))
+    story.append(paragraph("AI 结论", heading))
+    job_requirement_text = assessment.get("job_requirements") or snapshot.get("jobRequirements") or snapshot.get("jobTitle") or "目标岗位"
+    story.append(paragraph(f"招聘要求/岗位依据：{job_requirement_text}", small))
+    story.append(paragraph(assessment.get("ai_conclusion") or assessment.get("recommendation") or "", conclusion_style))
     story.append(paragraph("六维评分", heading))
-    dimension_rows = [["维度", "评分", "说明"]]
+    dimension_rows = [["维度", "评分", "星级", "说明"]]
     for item in assessment.get("dimensions") or []:
+        item_score = clamp_score(item.get("score"))
         dimension_rows.append([
             paragraph(item.get("name"), normal),
-            paragraph(str(clamp_score(item.get("score"))), normal),
+            paragraph(str(item_score), normal),
+            paragraph(f"{star_text(format_star_rating(item_score))} {format_star_rating(item_score)}/5", star_style),
             paragraph(item.get("comment"), small),
         ])
-    dimension_table = Table(dimension_rows, colWidths=[34 * mm, 20 * mm, 118 * mm])
+    dimension_table = Table(dimension_rows, colWidths=[30 * mm, 18 * mm, 38 * mm, 86 * mm])
     dimension_table.setStyle(TableStyle([
         ("FONTNAME", (0, 0), (-1, -1), font_name),
         ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#f1f5f9")),
