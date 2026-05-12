@@ -1139,7 +1139,7 @@ const salaryBadge = computed(() => {
 
 const highlightBadges = computed(() => {
   if (Array.isArray(profilerSource.value.highlightBadges) && profilerSource.value.highlightBadges.length) {
-    return profilerSource.value.highlightBadges.map(String)
+    return profilerSource.value.highlightBadges.map(profileDisplayText).filter(Boolean)
   }
   const badges = []
   if (experiences.value.length >= 1) badges.push('工作稳定')
@@ -1149,7 +1149,7 @@ const highlightBadges = computed(() => {
 
 const riskBadges = computed(() => {
   if (Array.isArray(profilerSource.value.riskBadges) && profilerSource.value.riskBadges.length) {
-    return profilerSource.value.riskBadges.map(String)
+    return profilerSource.value.riskBadges.map(profileDisplayText).filter(Boolean)
   }
   const badges = []
   if (String(profile.value.schoolType || profile.value.degree).includes('专') || String(profile.value.schoolType).includes('职业')) badges.push('职业教育')
@@ -1403,14 +1403,33 @@ function keywordWeight(pattern) {
 function profilerItems(key) {
   const section = profilerSource.value?.[key]
   if (!section) return []
-  if (Array.isArray(section)) return section.map((item) => String(item))
+  if (Array.isArray(section)) return section.map(profileDisplayText).filter(Boolean)
   if (Array.isArray(section.items)) {
-    return section.items.map((item) => {
-      if (typeof item === 'string') return item
-      return item.html || item.text || item.content || item.label || ''
-    }).filter(Boolean).map(String)
+    return section.items.map(profileDisplayText).filter(Boolean)
   }
-  return []
+  const text = profileDisplayText(section)
+  return text ? [text] : []
+}
+
+function profileDisplayText(item) {
+  if (item === null || item === undefined) return ''
+  if (typeof item === 'string' || typeof item === 'number' || typeof item === 'boolean') {
+    return String(item).trim()
+  }
+  if (Array.isArray(item)) {
+    return item.map(profileDisplayText).filter(Boolean).join('；')
+  }
+  if (typeof item === 'object') {
+    for (const key of ['html', 'text', 'content', 'label', 'name', 'title', 'value', 'desc', 'description']) {
+      const value = item[key]
+      const text = profileDisplayText(value)
+      if (text) return text
+    }
+    if (Array.isArray(item.items)) {
+      return item.items.map(profileDisplayText).filter(Boolean).join('；')
+    }
+  }
+  return ''
 }
 
 function tagGroupsByCategory(category) {
