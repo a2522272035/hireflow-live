@@ -73,7 +73,7 @@
           </span>
           <span v-if="showConfidence(item)" class="confidence-meter">
             <i :style="{ width: `${confidencePercent(item)}%` }"></i>
-            <b>置信度 {{ confidencePercent(item) }}%</b>
+            <b>角色判断 {{ confidencePercent(item) }}%</b>
           </span>
           <p>{{ item.text }}</p>
         </div>
@@ -179,7 +179,7 @@ function confidencePercent(item) {
 }
 
 function showConfidence(item) {
-  return item?.roleStatus === 'classified' && confidencePercent(item) > 0
+  return item?.roleStatus === 'classified' && confidencePercent(item) >= 60
 }
 
 const vadStatusClass = computed(() => {

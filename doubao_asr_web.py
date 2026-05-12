@@ -768,14 +768,40 @@ def hiring_grade(score: int) -> str:
     return "暂不推荐"
 
 
-def fallback_speaker_role(text: str) -> dict:
+def irrelevant_role_text_reason(text: str) -> str:
     cleaned = re.sub(r"\s+", "", str(text or ""))
     if not cleaned:
+        return "文本为空"
+    if len(cleaned) < 4:
+        return "文本过短，暂不判断"
+    repeated_test = re.fullmatch(r"(测试|test|喂|嗯|啊|呃|额|好|可以|行|是|对)[。！？!?.，,、]*", cleaned, re.IGNORECASE)
+    if repeated_test:
+        return "测试/寒暄内容，不参与角色判断"
+    test_count = cleaned.count("测试")
+    if test_count >= 2 and len(cleaned) <= 24:
+        return "测试内容，不参与角色判断"
+    lyric_cues = ["一杯敬明天", "一杯敬过往", "没人记起你的模样", "固执地唱着", "当你走进"]
+    if any(cue in cleaned for cue in lyric_cues):
+        return "疑似歌词或无关音频，不参与角色判断"
+    interview_cues = [
+        "简历", "岗位", "项目", "经验", "负责", "面试", "候选", "公司", "工作",
+        "税务", "会计", "运营", "数据", "指标", "能力", "经历", "职责", "为什么",
+        "请你", "请问", "介绍", "回答", "追问", "风险", "成果",
+    ]
+    if len(cleaned) >= 18 and not any(cue in cleaned for cue in interview_cues):
+        return "未检测到面试语义线索，暂不判断角色"
+    return ""
+
+
+def fallback_speaker_role(text: str) -> dict:
+    cleaned = re.sub(r"\s+", "", str(text or ""))
+    irrelevant_reason = irrelevant_role_text_reason(cleaned)
+    if irrelevant_reason:
         return {
             "role": "unknown",
             "speakerLabel": "待识别",
             "confidence": 0,
-            "reason": "文本为空",
+            "reason": irrelevant_reason,
             "source": "heuristic",
         }
 
@@ -793,14 +819,6 @@ def fallback_speaker_role(text: str) -> dict:
     interviewer_score = int(question_mark) + sum(1 for cue in interviewer_cues if cue in cleaned)
     candidate_score = sum(1 for cue in candidate_cues if cue in cleaned)
 
-    if len(cleaned) < 4:
-        return {
-            "role": "unknown",
-            "speakerLabel": "待识别",
-            "confidence": 0.35,
-            "reason": "文本过短，暂不判断",
-            "source": "heuristic",
-        }
     if interviewer_score > candidate_score and interviewer_score >= 1:
         return {
             "role": "interviewer",
@@ -828,6 +846,15 @@ def fallback_speaker_role(text: str) -> dict:
 
 def classify_realtime_speaker_role(text: str, history: list | None = None) -> dict:
     text = str(text or "").strip()
+    irrelevant_reason = irrelevant_role_text_reason(text)
+    if irrelevant_reason:
+        return {
+            "role": "unknown",
+            "speakerLabel": "待识别",
+            "confidence": 0,
+            "reason": irrelevant_reason,
+            "source": "guardrail",
+        }
     if not os.getenv("DEEPSEEK_API_KEY"):
         return fallback_speaker_role(text)
 
@@ -870,9 +897,11 @@ def classify_realtime_speaker_role(text: str, history: list | None = None) -> di
         except Exception:
             confidence = 0
         confidence = max(0, min(1, confidence))
-        min_confidence = float(os.getenv("ROLE_CLASSIFY_MIN_CONFIDENCE", "0.45"))
+        min_confidence = float(os.getenv("ROLE_CLASSIFY_MIN_CONFIDENCE", "0.6"))
         if confidence < min_confidence:
             role = "unknown"
+        if role == "unknown":
+            confidence = min(confidence, 0.4)
         return {
             "role": role,
             "speakerLabel": "面试官" if role == "interviewer" else "候选人" if role == "candidate" else "待识别",
@@ -911,6 +940,14 @@ def fallback_final_assessment(snapshot: dict) -> dict:
         str(item.get("text") or "")
         for item in finals
         if isinstance(item, dict) and item.get("speaker") != "interviewer"
+    )
+    candidate_utterance_count = sum(
+        1 for item in finals
+        if isinstance(item, dict) and item.get("speaker") != "interviewer" and str(item.get("text") or "").strip()
+    )
+    interviewer_question_count = sum(
+        1 for item in finals
+        if isinstance(item, dict) and item.get("speaker") == "interviewer" and str(item.get("text") or "").strip()
     )
     correct_count = sum(1 for item in analyses if isinstance(item, dict) and item.get("is_correct") is True)
     risk_count = sum(1 for item in analyses if isinstance(item, dict) and item.get("is_correct") is False)
@@ -1006,6 +1043,17 @@ def fallback_final_assessment(snapshot: dict) -> dict:
 
     if not transcript_text:
         risks.append("面试转写内容不足，报告仅能作为初筛参考。")
+    evidence_summary = [
+        f"简历关键点：{len(key_points)} 条",
+        f"候选人有效发言：{candidate_utterance_count} 段",
+        f"面试官问题/追问：{interviewer_question_count} 段",
+        f"阶段 AI 分析：{len(analyses)} 条",
+        f"存疑点：{doubt_count} 条",
+    ]
+    position_match_score = next(
+        (item["score"] for item in dimensions if item.get("name") == "岗位匹配度"),
+        total_score,
+    )
 
     return {
         "summary": f"{candidate_name}围绕{target_role}完成了面试，系统已结合简历关键画像、面试转写与阶段性分析生成综合评价。",
@@ -1026,6 +1074,8 @@ def fallback_final_assessment(snapshot: dict) -> dict:
         "star_rating": format_star_rating(total_score),
         "dimensions": dimensions,
         "resume_key_points": key_points,
+        "evidence_summary": evidence_summary,
+        "position_match_score": clamp_score(position_match_score),
         "job_requirements": job_requirements,
         "hiring_grade": hiring_grade(total_score),
         "strengths": (resume_strengths + strengths)[:6] or ["已完成基础回答，可继续结合岗位要求复核。"],
@@ -1061,10 +1111,11 @@ def normalize_final_assessment(raw: dict, fallback: dict) -> dict:
         })
     result["dimensions"] = normalized_dimensions
 
-    for key in ("strengths", "risks", "follow_ups", "resume_key_points"):
+    for key in ("strengths", "risks", "follow_ups", "resume_key_points", "evidence_summary"):
         value = raw.get(key)
         if isinstance(value, list):
             result[key] = [str(item) for item in value if str(item).strip()][:8]
+    result["position_match_score"] = clamp_score(raw.get("position_match_score"), result.get("position_match_score", result["total_score"]))
     if not result.get("hiring_grade"):
         result["hiring_grade"] = hiring_grade(result["total_score"])
     return result
@@ -1210,6 +1261,8 @@ JSON 格式：
   "hiring_grade": "强烈推荐/推荐进入下一轮/可进入复核/谨慎考虑/暂不推荐",
   "job_requirements": "本次招聘要求或岗位要求摘要",
   "resume_key_points": ["只保留简历主要部分，3-6条"],
+  "evidence_summary": ["必须来自输入数据的依据摘要"],
+  "position_match_score": 0-100,
   "total_score": 0-100,
   "star_rating": 0-5,
   "dimensions": [
@@ -1233,6 +1286,8 @@ JSON 格式：
   "hiring_grade": "强烈推荐/推荐进入下一轮/可进入复核/谨慎考虑/暂不推荐",
   "job_requirements": "本次招聘要求或岗位要求摘要",
   "resume_key_points": ["只保留简历主要部分，3-6条"],
+  "evidence_summary": ["必须来自输入数据的依据摘要"],
+  "position_match_score": 0-100,
   "total_score": 0-100,
   "star_rating": 0-5,
   "dimensions": [
@@ -1468,6 +1523,32 @@ def build_pdf_report(snapshot: dict, assessment: dict, pdf_path: Path) -> None:
             for x, y in score_points:
                 canvas.circle(x, y, 2.4, stroke=0, fill=1)
 
+    class ScoreBars(Flowable):
+        def __init__(self, dimensions: list[dict], width: int = 78 * mm, height: int = 70 * mm):
+            super().__init__()
+            self.dimensions = dimensions
+            self.width = width
+            self.height = height
+
+        def draw(self):
+            canvas = self.canv
+            canvas.setFont(font_name, 8.5)
+            y = self.height - 12
+            bar_x = 32 * mm
+            bar_width = self.width - bar_x - 8
+            for item in (self.dimensions or [])[:6]:
+                score = clamp_score(item.get("score"))
+                label = str(item.get("name") or "")
+                canvas.setFillColor(colors.HexColor("#334155"))
+                canvas.drawString(0, y - 2, label)
+                canvas.setFillColor(colors.HexColor("#e5edff"))
+                canvas.roundRect(bar_x, y - 1, bar_width, 5, 2.5, stroke=0, fill=1)
+                canvas.setFillColor(colors.HexColor("#3b82f6"))
+                canvas.roundRect(bar_x, y - 1, bar_width * score / 100, 5, 2.5, stroke=0, fill=1)
+                canvas.setFillColor(colors.HexColor("#1f2937"))
+                canvas.drawRightString(self.width, y - 3, str(score))
+                y -= 10 * mm
+
     normal = ParagraphStyle("NormalCN", fontName=font_name, fontSize=10.5, leading=16, textColor=colors.HexColor("#172033"))
     small = ParagraphStyle("SmallCN", parent=normal, fontSize=9, leading=13, textColor=colors.HexColor("#647086"))
     title = ParagraphStyle("TitleCN", parent=normal, fontSize=22, leading=28, spaceAfter=8, textColor=colors.HexColor("#111827"))
@@ -1592,10 +1673,37 @@ def build_pdf_report(snapshot: dict, assessment: dict, pdf_path: Path) -> None:
     ]))
     story.append(score_table)
     story.append(paragraph(assessment.get("summary") or "", normal))
+    evidence = assessment.get("evidence_summary") or []
+    if evidence:
+        story.append(paragraph("数据依据：" + "；".join(str(item) for item in evidence[:5]), small))
     story.append(paragraph("AI 结论", heading))
     job_requirement_text = assessment.get("job_requirements") or snapshot.get("jobRequirements") or snapshot.get("jobTitle") or "目标岗位"
     story.append(paragraph(f"招聘要求/岗位依据：{job_requirement_text}", small))
     story.append(paragraph(assessment.get("ai_conclusion") or assessment.get("recommendation") or "", conclusion_style))
+    match_score = clamp_score(assessment.get("position_match_score"), assessment.get("total_score", 70))
+    story.append(paragraph("岗位匹配度", heading))
+    match_table = Table(
+        [[
+            paragraph(f"{match_score}%", ParagraphStyle("MatchScoreCN", parent=title, fontSize=22, textColor=colors.HexColor("#2563eb"))),
+            paragraph(
+                "匹配度由简历关键画像、目标岗位/招聘要求、候选人问答内容和阶段 AI 分析共同推导。"
+                "该分值只作为面试复核参考，不替代人工判断。",
+                normal,
+            ),
+        ]],
+        colWidths=[32 * mm, 140 * mm],
+    )
+    match_table.setStyle(TableStyle([
+        ("FONTNAME", (0, 0), (-1, -1), font_name),
+        ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#f8fbff")),
+        ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#dbeafe")),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 9),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 9),
+        ("TOPPADDING", (0, 0), (-1, -1), 8),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+    ]))
+    story.append(match_table)
     story.append(paragraph("六维评分", heading))
     dimension_rows = [["维度", "评分", "星级", "说明"]]
     for item in assessment.get("dimensions") or []:
@@ -1617,7 +1725,18 @@ def build_pdf_report(snapshot: dict, assessment: dict, pdf_path: Path) -> None:
         ("TOPPADDING", (0, 0), (-1, -1), 6),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
     ]))
-    story.append(RadarChart(assessment.get("dimensions") or []))
+    chart_table = Table(
+        [[RadarChart(assessment.get("dimensions") or [], width=84 * mm, height=82 * mm), ScoreBars(assessment.get("dimensions") or [])]],
+        colWidths=[88 * mm, 84 * mm],
+    )
+    chart_table.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 0),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+        ("TOPPADDING", (0, 0), (-1, -1), 2),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+    ]))
+    story.append(chart_table)
     story.append(dimension_table)
 
     story.append(paragraph("个人详细说明", heading))
