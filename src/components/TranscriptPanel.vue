@@ -71,10 +71,6 @@
           <span class="speaker-tag" :class="[item.speaker || 'unknown', item.roleStatus]">
             {{ item.speakerLabel || speakerLabel(item.speaker) }}
           </span>
-          <span v-if="showConfidence(item)" class="confidence-meter">
-            <i :style="{ width: `${confidencePercent(item)}%` }"></i>
-            <b>角色判断 {{ confidencePercent(item) }}%</b>
-          </span>
           <p>{{ item.text }}</p>
         </div>
       </article>
@@ -170,16 +166,6 @@ function speakerLabel(speaker) {
   if (speaker === 'candidate') return '候选人'
   if (speaker === 'interviewer') return '面试官'
   return '待识别'
-}
-
-function confidencePercent(item) {
-  const value = Number(item?.roleConfidence)
-  if (!Number.isFinite(value) || value <= 0) return 0
-  return Math.round(Math.max(0, Math.min(1, value)) * 100)
-}
-
-function showConfidence(item) {
-  return item?.roleStatus === 'classified' && confidencePercent(item) >= 60
 }
 
 const vadStatusClass = computed(() => {
@@ -522,38 +508,6 @@ watch(
 .speaker-tag.classifying {
   background: #fff7ed;
   color: #c2410c;
-}
-
-.confidence-meter {
-  align-items: center;
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
-  border-radius: 999px;
-  display: inline-flex;
-  height: 21px;
-  margin: 0 0 6px 7px;
-  min-width: 112px;
-  overflow: hidden;
-  position: relative;
-  vertical-align: top;
-}
-
-.confidence-meter i {
-  background: linear-gradient(90deg, #93c5fd, #22c55e);
-  bottom: 0;
-  left: 0;
-  opacity: 0.85;
-  position: absolute;
-  top: 0;
-}
-
-.confidence-meter b {
-  color: #334155;
-  font-size: 11px;
-  font-weight: 800;
-  padding: 0 8px;
-  position: relative;
-  z-index: 1;
 }
 
 .final-line.pending {

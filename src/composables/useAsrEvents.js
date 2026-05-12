@@ -39,7 +39,10 @@ export function useAsrEvents() {
       eventSocket = null
     }
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const wsUrl = `${protocol}//${window.location.host}/ws`
+    const isLocalDev = ['127.0.0.1', 'localhost'].includes(window.location.hostname) && window.location.port === '5173'
+    const wsUrl = isLocalDev
+      ? `${protocol}//127.0.0.1:8771`
+      : `${protocol}//${window.location.host}/ws`
     return new Promise((resolve, reject) => {
       const socket = new WebSocket(wsUrl)
       eventSocket = socket
@@ -121,16 +124,6 @@ export function useAsrEvents() {
     latestFinal.value = null
   }
 
-  function speakerLabelForRole(role) {
-    if (role === 'candidate') return '候选人'
-    if (role === 'interviewer') return '面试官'
-    return '待识别'
-  }
-
-  function normalizeRole(role) {
-    return ['candidate', 'interviewer', 'unknown'].includes(role) ? role : 'unknown'
-  }
-
   function updateFinalEntry(entryId, patch) {
     const index = finals.value.findIndex((item) => item.id === entryId)
     if (index < 0) return null
@@ -141,91 +134,36 @@ export function useAsrEvents() {
     return finals.value[index]
   }
 
-  function buildRoleHistory(entryId) {
-    return finals.value
-      .filter((item) => item.id !== entryId && item.text && !item.pending)
-      .slice(-8)
-      .map((item) => ({
-        speaker: item.speaker || 'unknown',
-        speakerLabel: item.speakerLabel || speakerLabelForRole(item.speaker),
-        text: item.text
-      }))
+  function shouldAnalyzeTranscript(text) {
+    const clean = String(text || '').replace(/\s+/g, '')
+    if (clean.length < 8) return false
+    if (/^(测试|test|喂|嗯|啊|呃|额|好|可以|行|是|对)[。！？!?.，,、]*$/i.test(clean)) return false
+    if ((clean.match(/测试/g) || []).length >= 2 && clean.length <= 30) return false
+    const lyricCues = ['一杯敬明天', '一杯敬过往', '没人记起你的模样', '固执地唱着', '当你走进']
+    if (lyricCues.some((cue) => clean.includes(cue))) return false
+    const candidateCues = [
+      '我', '我们', '负责', '参与', '主导', '做过', '经历', '项目', '岗位',
+      '工作', '数据', '指标', '客户', '税务', '会计', '运营', '成本', '发票',
+      '流程', '复盘', '结果', '提升', '降低', '完成'
+    ]
+    const interviewerCues = ['请问', '请你', '能不能', '介绍一下', '讲一下', '为什么', '如何', '你觉得']
+    const cueCount = candidateCues.filter((cue) => clean.includes(cue)).length
+    const looksLikeQuestionOnly = clean.endsWith('？') || clean.endsWith('?') || interviewerCues.some((cue) => clean.startsWith(cue))
+    if (looksLikeQuestionOnly && cueCount === 0) return false
+    return cueCount > 0
   }
 
-  function buildCandidateAnalysisText() {
-    const interviewerContext = finals.value
-      .filter((item) => item.speaker === 'interviewer' && item.text && !item.pending)
-      .slice(-3)
-      .map((item) => `${item.time || ''} 面试官：${item.text}`)
+  function buildAnalysisTextForEntry(entry) {
+    const recentTranscript = finals.value
+      .filter((item) => item.text && !item.pending)
+      .slice(-6)
+      .map((item) => `${item.time || ''} 转写：${item.text}`)
       .join('\n')
-    const candidateText = finals.value
-      .filter((item) => item.speaker === 'candidate' && item.text && !item.pending)
-      .slice(-8)
-      .map((item) => item.text)
-      .join('')
-
-    if (!candidateText) return ''
     return [
-      interviewerContext ? `面试官上下文：\n${interviewerContext}` : '',
-      `候选人回答：\n${candidateText}`
-    ].filter(Boolean).join('\n\n')
-  }
-
-  async function classifyEntrySpeaker(entry) {
-    if (!entry?.id || !entry.text) return
-
-    const version = stateVersion
-    updateFinalEntry(entry.id, {
-      speaker: 'unknown',
-      speakerLabel: '识别中',
-      roleStatus: 'classifying'
-    })
-    updateAiLoading(1)
-
-    try {
-      const response = await fetch('/api/classify-speaker-role', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          text: entry.text,
-          history: buildRoleHistory(entry.id)
-        })
-      })
-      if (!response.ok) throw new Error(await response.text())
-
-      const data = await response.json()
-      if (!isCurrentVersion(version)) return
-      const role = normalizeRole(data.role)
-      const updatedEntry = updateFinalEntry(entry.id, {
-        speaker: role,
-        speakerLabel: data.speakerLabel || speakerLabelForRole(role),
-        roleStatus: 'classified',
-        roleSource: data.source || 'ai',
-        roleConfidence: Number(data.confidence) || 0,
-        roleReason: data.reason || ''
-      })
-
-      if (role === 'candidate' && updatedEntry) {
-        latestFinal.value = updatedEntry
-        const analysisText = buildCandidateAnalysisText()
-        if (analysisText) {
-          triggerAiAnalysis(analysisText, 'candidate_sentence_done', entry.id)
-        }
-      }
-    } catch (error) {
-      if (!isCurrentVersion(version)) return
-      console.warn('[AI] 角色判断失败:', error)
-      updateFinalEntry(entry.id, {
-        speaker: 'unknown',
-        speakerLabel: '待识别',
-        roleStatus: 'failed',
-        roleSource: 'error',
-        roleConfidence: 0,
-        roleReason: error.message
-      })
-    } finally {
-      updateAiLoading(-1)
-    }
+      `最近面试转写：\n${recentTranscript}`,
+      `重点片段：\n${entry.text}`,
+      '请判断其中是否存在可评估的候选人回答；如果主要是面试官提问、寒暄、测试或无关内容，请返回无法判定。'
+    ].join('\n\n')
   }
 
   function buildAnalysisMessage(result) {
@@ -424,7 +362,18 @@ export function useAsrEvents() {
       asrStatus.value = '✓ 已确认句子'
       const entry = finals.value[finals.value.length - 1]
       if (entry && !entry.pending) {
-        classifyEntrySpeaker(entry)
+        updateFinalEntry(entry.id, {
+          speaker: 'unknown',
+          speakerLabel: '转写片段',
+          roleStatus: 'unclassified',
+          roleSource: 'none',
+          roleConfidence: 0,
+          roleReason: '实时阶段不使用 DeepSeek 判断说话人'
+        })
+        if (shouldAnalyzeTranscript(entry.text)) {
+          latestFinal.value = entry
+          triggerAiAnalysis(buildAnalysisTextForEntry(entry), 'sentence_done', entry.id)
+        }
       }
       return
     }

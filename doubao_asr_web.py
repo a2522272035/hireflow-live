@@ -846,74 +846,10 @@ def fallback_speaker_role(text: str) -> dict:
 
 def classify_realtime_speaker_role(text: str, history: list | None = None) -> dict:
     text = str(text or "").strip()
-    irrelevant_reason = irrelevant_role_text_reason(text)
-    if irrelevant_reason:
-        return {
-            "role": "unknown",
-            "speakerLabel": "待识别",
-            "confidence": 0,
-            "reason": irrelevant_reason,
-            "source": "guardrail",
-        }
-    if not os.getenv("DEEPSEEK_API_KEY"):
-        return fallback_speaker_role(text)
-
-    system_prompt = """
-你是实时面试转写的说话人角色分类器。场景是一对一面试，当前片段可能来自面试官、候选人，也可能因为收音混杂而无法判断。
-
-请只返回 JSON：
-{
-  "role": "interviewer/candidate/unknown",
-  "confidence": 0.0-1.0,
-  "reason": "一句中文理由"
-}
-
-判断规则：
-- 面试官：提出问题、追问、引导候选人说明、确认简历或流程。
-- 候选人：回答问题、自我介绍、描述个人经历、项目、能力、结果或观点。
-- unknown：文本太短、寒暄/噪声、歌词/无关测试内容、面试官和候选人混杂，或仅凭当前片段无法可靠判断。
-- 不要根据回答质量判断角色，不要把所有问句都当候选人，也不要强行二选一。
-""".strip()
-    payload = {
-        "current_text": compact_text(text, 1200),
-        "recent_context": history[-8:] if isinstance(history, list) else [],
-    }
-    try:
-        content = deepseek_chat(
-            [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
-            ],
-            max_tokens=180,
-            temperature=0,
-            timeout=int(os.getenv("ROLE_CLASSIFY_TIMEOUT_SECONDS", "6")),
-        )
-        result = extract_json_object(content)
-        role = str(result.get("role") or "unknown").lower()
-        if role not in ("interviewer", "candidate", "unknown"):
-            role = "unknown"
-        try:
-            confidence = float(result.get("confidence"))
-        except Exception:
-            confidence = 0
-        confidence = max(0, min(1, confidence))
-        min_confidence = float(os.getenv("ROLE_CLASSIFY_MIN_CONFIDENCE", "0.6"))
-        if confidence < min_confidence:
-            role = "unknown"
-        if role == "unknown":
-            confidence = min(confidence, 0.4)
-        return {
-            "role": role,
-            "speakerLabel": "面试官" if role == "interviewer" else "候选人" if role == "candidate" else "待识别",
-            "confidence": confidence,
-            "reason": str(result.get("reason") or "AI 已完成角色判断"),
-            "source": "deepseek",
-        }
-    except Exception as exc:
-        fallback = fallback_speaker_role(text)
-        fallback["reason"] = f"AI角色判断异常，已使用规则兜底：{exc}"
-        fallback["source"] = "heuristic_after_error"
-        return fallback
+    result = fallback_speaker_role(text)
+    result["source"] = "heuristic_only"
+    result["reason"] = f"{result.get('reason') or '规则判断'}；实时阶段不调用 DeepSeek 判断说话人"
+    return result
 
 
 def fallback_final_assessment(snapshot: dict) -> dict:
