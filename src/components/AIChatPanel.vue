@@ -17,10 +17,9 @@
         <span v-for="tag in resumeTags" :key="tag">{{ tag }}</span>
       </div>
 
-      <div v-if="aiMetrics.length" class="ai-metrics">
-        <div v-for="metric in aiMetrics" :key="metric.label" class="metric-row">
+      <div v-if="analysisStats.length" class="analysis-stats">
+        <div v-for="metric in analysisStats" :key="metric.label" class="stat-card">
           <span>{{ metric.label }}</span>
-          <i><b :style="{ width: `${metric.value}%` }"></b></i>
           <strong>{{ metric.value }}</strong>
         </div>
       </div>
@@ -45,13 +44,10 @@
       </div>
     </div>
 
-    <DoubtsList v-if="doubts.length > 0" :doubts="doubts" />
-
-    <QuestionList
-      :questions="questions"
-      :loading="loading"
-      @select="$emit('ask-question', $event)"
-    />
+    <div class="decision-board">
+      <DoubtsList :doubts="doubts" />
+      <QuestionList :questions="questions" :loading="loading" />
+    </div>
   </section>
 </template>
 
@@ -86,8 +82,6 @@ const props = defineProps({
   }
 })
 
-defineEmits(['ask-question'])
-
 const messageListRef = ref(null)
 
 const resumeTags = computed(() => {
@@ -107,30 +101,33 @@ const resumeTags = computed(() => {
 
 const showWorkbench = computed(() => resumeTags.value.length > 0 || props.analyses.length > 0 || props.questions.length > 0 || props.doubts.length > 0 || props.loading)
 
-const aiMetrics = computed(() => {
-  const analysisCount = props.analyses.length
-  const doubtCount = props.doubts.length
-  const questionCount = props.questions.length
-  const metrics = []
+const analysisStats = computed(() => {
+  const stats = []
   if (resumeTags.value.length) {
-    metrics.push({
-      label: '简历匹配',
-      value: clampMetric(58 + resumeTags.value.length * 5)
+    stats.push({
+      label: '简历上下文',
+      value: `${resumeTags.value.length} 项`
     })
   }
-  if (analysisCount > 0 || questionCount > 0) {
-    metrics.push({
-      label: '回答具体度',
-      value: clampMetric(42 + analysisCount * 9 + questionCount * 3)
+  if (props.analyses.length > 0) {
+    stats.push({
+      label: '已分析片段',
+      value: `${props.analyses.length} 段`
     })
   }
-  if (doubtCount > 0) {
-    metrics.push({
-      label: '风险可视化',
-      value: clampMetric(52 + Math.min(doubtCount, 5) * 8)
+  if (props.doubts.length > 0) {
+    stats.push({
+      label: '存疑条目',
+      value: `${props.doubts.length} 条`
     })
   }
-  return metrics
+  if (props.questions.length > 0) {
+    stats.push({
+      label: '追问建议',
+      value: `${props.questions.length} 条`
+    })
+  }
+  return stats
 })
 
 function readText(source, raw, ...keys) {
@@ -157,10 +154,6 @@ function readSkills(value) {
   }).map((item) => String(item).trim()).filter(Boolean)
 }
 
-function clampMetric(value) {
-  return Math.max(12, Math.min(96, Math.round(value)))
-}
-
 watch(
   () => props.messages.length,
   async () => {
@@ -174,6 +167,7 @@ watch(
 
 <style scoped>
 .ai-panel {
+  gap: 10px;
   min-height: 0;
   overflow: hidden;
 }
@@ -211,12 +205,11 @@ watch(
   border: 1px solid #dce8f8;
   border-radius: 10px;
   flex: 0 0 auto;
-  margin-bottom: 8px;
   padding: 8px;
 }
 
 .resume-hit-strip,
-.ai-metrics {
+.analysis-stats {
   position: relative;
 }
 
@@ -250,58 +243,51 @@ watch(
   white-space: nowrap;
 }
 
-.ai-metrics {
+.analysis-stats {
   display: grid;
-  gap: 8px;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   margin-top: 8px;
 }
 
-.metric-row {
-  align-items: center;
-  display: grid;
-  gap: 6px;
-  grid-template-columns: 64px 1fr 28px;
+.stat-card {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
   min-width: 0;
+  padding: 7px 8px;
 }
 
-.metric-row span,
-.metric-row strong {
-  color: #475569;
+.stat-card span {
+  color: #64748b;
+  display: block;
   font-size: 11px;
   font-weight: 800;
-  min-width: 0;
-}
-
-.metric-row strong {
-  color: #2563eb;
-  text-align: right;
-}
-
-.metric-row i {
-  background: #e2e8f0;
-  border-radius: 999px;
-  display: block;
-  height: 7px;
   overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.metric-row b {
-  background: linear-gradient(90deg, #60a5fa, #22c55e);
-  border-radius: inherit;
+.stat-card strong {
+  color: #1d4ed8;
   display: block;
-  height: 100%;
-  transition: width 0.3s ease;
+  font-size: 15px;
+  font-weight: 900;
+  line-height: 1.25;
+  margin-top: 3px;
 }
 
 .message-list {
+  background: #fbfdff;
+  border: 1px solid #edf2f7;
+  border-radius: 10px;
   display: flex;
-  flex: 1 1 120px;
+  flex: 0 1 32%;
   flex-direction: column;
   gap: 8px;
   min-height: 0;
   overflow: auto;
-  padding: 4px 4px 8px;
+  padding: 8px;
 }
 
 .chat-message {
@@ -354,12 +340,17 @@ watch(
   text-align: center;
 }
 
-@media (max-width: 720px) {
-  .metric-row {
-    grid-template-columns: 68px 1fr 30px;
-  }
+.decision-board {
+  display: grid;
+  flex: 1 1 360px;
+  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  min-height: 0;
+}
 
-  .ai-metrics {
+@media (max-width: 720px) {
+  .analysis-stats,
+  .decision-board {
     grid-template-columns: 1fr;
   }
 }

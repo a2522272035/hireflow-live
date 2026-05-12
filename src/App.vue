@@ -78,7 +78,6 @@
         :doubts="doubts"
         :resume="loadedResume"
         :loading="aiLoading"
-        @ask-question="sendQuestion"
       />
     </section>
 
@@ -283,7 +282,7 @@ const {
   partialText, currentText, finals,
   messages, analyses, questions, doubts, aiLoading,
   connect: connectEvents, disconnect: disconnectEvents,
-  sendAudio, sendQuestion, switchMode, resetAsrState
+  sendAudio, switchMode, resetAsrState
 } = useAsrEvents()
 
 const asrMode = ref('fast')
@@ -990,18 +989,34 @@ function addDemoAnalysis(question, entry, index) {
       content: buildDemoAnalysisMessage(analysisRecord),
       time: formatClock()
     }
-    questions.value = questionList.slice(0, 3).map((text) => ({
+    const newQuestions = questionList.slice(0, 3).map((text) => ({
       id: makeDemoId('question'),
-      text
+      text,
+      time: analysisRecord.time
     }))
-    doubts.value = doubtsList.slice(0, 5).map((text, itemIndex) => ({
+    questions.value = mergeDemoInsightItems(questions.value, newQuestions, 24)
+    const newDoubts = doubtsList.slice(0, 5).map((text) => ({
       id: makeDemoId('doubt'),
       text,
-      index: itemIndex + 1
     }))
+    doubts.value = mergeDemoInsightItems(doubts.value, newDoubts, 24)
+      .map((item, itemIndex) => ({ ...item, index: itemIndex + 1, time: item.time || analysisRecord.time }))
     aiLoading.value = false
     persistSession()
   })
+}
+
+function mergeDemoInsightItems(existingItems, incomingItems, limit = 24) {
+  const seen = new Set()
+  const merged = []
+  for (const item of [...existingItems, ...incomingItems]) {
+    const text = String(item?.text || '').trim()
+    if (!text || seen.has(text)) continue
+    seen.add(text)
+    merged.push(item)
+    if (merged.length >= limit) break
+  }
+  return merged
 }
 
 function createDemoAnalysisRecord(question, entry, index, time = formatClock()) {

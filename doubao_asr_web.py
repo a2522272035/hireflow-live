@@ -301,7 +301,69 @@ def compact_resume_text(value: Any, limit: int = 600) -> str:
     return text[:limit]
 
 
+def first_dict(*values: Any) -> dict:
+    for value in values:
+        if isinstance(value, dict) and value:
+            return value
+    return {}
+
+
+def normalize_profile_item_text(item: Any) -> str:
+    if item is None:
+        return ""
+    if isinstance(item, str):
+        return item.strip()
+    if isinstance(item, dict):
+        for key in ("text", "label", "name", "tag_name", "title", "value", "html"):
+            value = item.get(key)
+            if value not in (None, "", []):
+                return re.sub(r"<[^>]+>", "", str(value)).strip()
+    return str(item).strip()
+
+
+def profiler_tag_terms(profiler_result: dict) -> list[dict]:
+    terms: list[dict] = []
+    tags = profiler_result.get("tags") if isinstance(profiler_result, dict) else []
+    if not isinstance(tags, list):
+        return terms
+    for group in tags:
+        if not isinstance(group, dict):
+            continue
+        category = str(group.get("category") or group.get("name") or "").strip()
+        subs = group.get("subs") if isinstance(group.get("subs"), list) else []
+        for sub in subs:
+            if not isinstance(sub, dict):
+                continue
+            label = str(sub.get("label") or sub.get("name") or category).strip()
+            items = sub.get("items") if isinstance(sub.get("items"), list) else []
+            for item in items:
+                text = normalize_profile_item_text(item)
+                if not text:
+                    continue
+                tooltip = ""
+                if isinstance(item, dict):
+                    tooltip = normalize_profile_item_text(item.get("tooltip") or item.get("title"))
+                terms.append({
+                    "text": text,
+                    "category": category,
+                    "label": label,
+                    "tooltip": tooltip,
+                })
+    return terms
+
+
 def normalize_resumesdk_result(result: dict, filename: str, raw_response: dict) -> dict:
+    profiler_result = first_dict(
+        raw_response.get("profiler_result"),
+        raw_response.get("profile_result"),
+        raw_response.get("profile"),
+        raw_response.get("profiler"),
+        result.get("profiler_result"),
+        result.get("profile_result"),
+        result.get("profile"),
+        result.get("profiler"),
+    )
+
     def first_value(*keys: str) -> Any:
         for key in keys:
             value = result.get(key)
@@ -438,8 +500,12 @@ def normalize_resumesdk_result(result: dict, filename: str, raw_response: dict) 
         "languages": languages[:10],
         "resume_integrity": result.get("resume_integrity") or "",
         "parsed_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "eval": raw_response.get("eval") or result.get("eval") or {},
-        "tags": raw_response.get("tags") or result.get("tags") or {},
+        "eval": raw_response.get("eval") or profiler_result.get("eval") or result.get("eval") or {},
+        "tags": raw_response.get("tags") or profiler_result.get("tags") or result.get("tags") or {},
+        "profile": profiler_result,
+        "profiler": profiler_result,
+        "profiler_result": profiler_result,
+        "profile_terms": profiler_tag_terms(profiler_result),
         "raw_result": result,
         "raw": result,
         "raw_resumesdk_response": raw_response,
@@ -448,8 +514,8 @@ def normalize_resumesdk_result(result: dict, filename: str, raw_response: dict) 
 
 
 def parse_resume_with_resumesdk(file_bytes: bytes, filename: str) -> dict:
-    """Use ResumeSDK to parse resume into structured fields."""
-    api_url = os.getenv("RESUMESDK_URL", "https://www.resumesdk.com/api/parse")
+    """Use ResumeSDK profile parsing when available, falling back to normal parsing only if configured."""
+    api_url = os.getenv("RESUMESDK_URL", "https://www.resumesdk.com/api/parse_profile")
     uid = os.getenv("RESUMESDK_UID", "")
     pwd = os.getenv("RESUMESDK_PWD", "")
     appcode = os.getenv("RESUMESDK_APPCODE", "")
@@ -485,7 +551,19 @@ def parse_resume_with_resumesdk(file_bytes: bytes, filename: str) -> dict:
             response = json.loads(resp.read().decode("utf-8", errors="replace") or "{}")
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"ResumeSDK HTTP {exc.code}: {detail}") from exc
+        if os.getenv("RESUMESDK_FALLBACK_PARSE", "false").lower() in ("1", "true", "yes") and "parse_profile" in api_url:
+            fallback_url = os.getenv("RESUMESDK_PARSE_URL", "https://www.resumesdk.com/api/parse")
+            fallback_req = urllib.request.Request(
+                fallback_url,
+                data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+                headers=headers,
+                method="POST",
+            )
+            with urllib.request.urlopen(fallback_req, timeout=timeout) as resp:
+                response = json.loads(resp.read().decode("utf-8", errors="replace") or "{}")
+                response.setdefault("warnings", []).append(f"parse_profile failed and fell back to parse: HTTP {exc.code}")
+        else:
+            raise RuntimeError(f"ResumeSDK HTTP {exc.code}: {detail}") from exc
 
     status = response.get("status") if isinstance(response, dict) else {}
     if not isinstance(status, dict) or int(status.get("code") or 0) != 200:
@@ -1057,6 +1135,64 @@ def normalize_final_assessment(raw: dict, fallback: dict) -> dict:
     return result
 
 
+_term_cache_lock = threading.Lock()
+
+
+def term_cache_path() -> Path:
+    configured = os.getenv("TERM_EXPLAIN_CACHE_PATH", "").strip()
+    if configured:
+        return Path(configured)
+    return Path(".cache") / "term_explanations.json"
+
+
+def term_cache_key(term: str, category: str = "", context: str = "") -> str:
+    raw = "\n".join([
+        re.sub(r"\s+", " ", str(term or "")).strip().lower(),
+        re.sub(r"\s+", " ", str(category or "")).strip().lower(),
+        re.sub(r"\s+", " ", str(context or "")).strip().lower()[:240],
+    ])
+    return hashlib.sha1(raw.encode("utf-8")).hexdigest()
+
+
+def load_term_cache() -> dict:
+    path = term_cache_path()
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def read_term_cache(term: str, category: str = "", context: str = "") -> str:
+    key = term_cache_key(term, category, context)
+    with _term_cache_lock:
+        cache = load_term_cache()
+    item = cache.get(key)
+    if isinstance(item, dict):
+        return str(item.get("explanation") or "").strip()
+    return ""
+
+
+def write_term_cache(term: str, category: str, context: str, explanation: str) -> None:
+    clean = str(explanation or "").strip()
+    if not clean:
+        return
+    path = term_cache_path()
+    key = term_cache_key(term, category, context)
+    with _term_cache_lock:
+        cache = load_term_cache()
+        cache[key] = {
+            "term": term,
+            "category": category,
+            "context": context[:500],
+            "explanation": clean,
+            "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        }
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(cache, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
 def explain_resume_term(payload: dict) -> str:
     term = str(payload.get("term") or "").strip()
     category = str(payload.get("category") or "").strip()
@@ -1068,6 +1204,9 @@ def explain_resume_term(payload: dict) -> str:
     local_explanation = local_resume_term_explanation(term)
     if local_explanation and not force_ai:
         return local_explanation
+    cached_explanation = read_term_cache(term, category, context)
+    if cached_explanation and not payload.get("refresh_ai"):
+        return cached_explanation
     if not os.getenv("DEEPSEEK_API_KEY"):
         return (
             f"“{term}”是简历中的{category or '术语'}。当前本地词典暂未收录固定解释。"
@@ -1091,7 +1230,7 @@ def explain_resume_term(payload: dict) -> str:
         "resume": resume,
     }
     try:
-        return deepseek_chat(
+        explanation = deepseek_chat(
             [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": json.dumps(user_content, ensure_ascii=False)},
@@ -1100,6 +1239,8 @@ def explain_resume_term(payload: dict) -> str:
             temperature=0.2,
             timeout=int(os.getenv("TERM_EXPLAIN_TIMEOUT_SECONDS", "8")),
         ).strip()
+        write_term_cache(term, category, context, explanation)
+        return explanation
     except Exception as exc:
         print(f"[AI] term explanation fallback: {exc}", flush=True)
         return local_explanation or (

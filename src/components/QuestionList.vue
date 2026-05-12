@@ -3,19 +3,20 @@
     <div class="question-head">
       <span>快速追问建议</span>
       <small v-if="loading">生成中...</small>
+      <small v-else>{{ questions.length }} 条</small>
     </div>
 
-    <div class="question-grid">
-      <button
+    <div v-if="questions.length" class="question-timeline">
+      <article
         v-for="question in questions"
         :key="question.id"
-        class="question-button"
-        type="button"
-        @click="$emit('select', question.text)"
+        class="question-card"
       >
-        {{ question.text }}
-      </button>
+        <time v-if="question.time">{{ question.time }}</time>
+        <p>{{ question.text }}</p>
+      </article>
     </div>
+    <div v-else class="empty-board">等待追问建议</div>
   </section>
 </template>
 
@@ -31,16 +32,18 @@ defineProps({
   }
 })
 
-defineEmits(['select'])
 </script>
 
 <style scoped>
 .question-list {
-  border-top: 1px solid #edf0f6;
-  flex: 0 0 auto;
-  padding-top: 10px;
-  max-height: 112px;
-  overflow-y: auto;
+  background: #f7fdf9;
+  border: 1px solid #cfeedd;
+  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  padding: 10px;
 }
 
 .question-head {
@@ -58,38 +61,52 @@ defineEmits(['select'])
   font-weight: 600;
 }
 
-.question-grid {
-  display: grid;
+.question-timeline {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
   gap: 8px;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  min-height: 0;
+  overflow: auto;
+  padding-right: 2px;
 }
 
-.question-button {
-  background: #effdf5;
+.question-card {
+  background: #ffffff;
   border: 1px solid #bdebd0;
   border-radius: 8px;
   color: #15734a;
-  cursor: pointer;
   font-size: 13px;
   font-weight: 650;
   line-height: 1.35;
-  min-height: 34px;
   min-width: 0;
   overflow-wrap: anywhere;
-  padding: 8px 10px;
+  padding: 9px 10px;
   text-align: left;
-  transition: border-color 0.16s ease, box-shadow 0.16s ease, transform 0.16s ease;
 }
 
-.question-button:hover {
-  border-color: #39c178;
-  box-shadow: 0 8px 20px rgba(30, 170, 96, 0.12);
-  transform: translateY(-1px);
+.question-card time {
+  color: #16a34a;
+  display: block;
+  font-size: 11px;
+  font-weight: 900;
+  margin-bottom: 5px;
 }
 
-@media (max-width: 720px) {
-  .question-grid {
-    grid-template-columns: 1fr;
-  }
+.question-card p {
+  margin: 0;
+}
+
+.empty-board {
+  align-items: center;
+  border: 1px dashed #bdebd0;
+  border-radius: 8px;
+  color: #7b8f84;
+  display: flex;
+  flex: 1;
+  font-size: 13px;
+  font-weight: 700;
+  justify-content: center;
+  min-height: 140px;
 }
 </style>

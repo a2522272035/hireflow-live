@@ -278,7 +278,7 @@ select {
   display: grid;
   flex: 1;
   gap: 12px;
-  grid-template-columns: minmax(420px, 0.95fr) minmax(480px, 1.05fr);
+  grid-template-columns: minmax(320px, 0.72fr) minmax(620px, 1.28fr);
   min-height: 0;
   overflow: hidden;
 }

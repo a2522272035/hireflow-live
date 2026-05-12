@@ -2,18 +2,23 @@
   <section class="doubts-list">
     <div class="doubts-head">
       <span>存疑内容</span>
+      <small>{{ doubts.length }} 条</small>
     </div>
 
-    <div class="doubts-grid">
-      <div
+    <div v-if="doubts.length" class="doubts-timeline">
+      <article
         v-for="doubt in doubts"
         :key="doubt.id"
         class="doubt-item"
       >
         <span class="doubt-number">{{ doubt.index }}</span>
-        <span class="doubt-text">{{ doubt.text }}</span>
-      </div>
+        <div>
+          <time v-if="doubt.time">{{ doubt.time }}</time>
+          <p>{{ doubt.text }}</p>
+        </div>
+      </article>
     </div>
+    <div v-else class="empty-board">等待风险核验</div>
   </section>
 </template>
 
@@ -28,13 +33,14 @@ defineProps({
 
 <style scoped>
 .doubts-list {
-  border-top: 1px solid #edf0f6;
-  flex: 0 1 auto;
-  margin-bottom: 8px;
-  max-height: 118px;
+  background: #fffaf0;
+  border: 1px solid #fde4a7;
+  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
   min-height: 0;
-  overflow: auto;
-  padding-top: 10px;
+  overflow: hidden;
+  padding: 10px;
 }
 
 .doubts-head {
@@ -47,26 +53,34 @@ defineProps({
   margin-bottom: 8px;
 }
 
-.doubts-grid {
-  display: grid;
+.doubts-head small {
+  color: #a16207;
+  font-weight: 800;
+}
+
+.doubts-timeline {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
   gap: 8px;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  min-height: 0;
+  overflow: auto;
+  padding-right: 2px;
 }
 
 .doubt-item {
-  background: #fffbeb;
+  align-items: flex-start;
+  background: #ffffff;
   border: 1px solid #fde68a;
   border-radius: 8px;
   color: #92400e;
+  display: flex;
   font-size: 13px;
   font-weight: 650;
+  gap: 8px;
   line-height: 1.4;
-  min-height: 36px;
   min-width: 0;
   padding: 8px 10px;
-  display: flex;
-  gap: 8px;
-  align-items: flex-start;
 }
 
 .doubt-number {
@@ -83,15 +97,34 @@ defineProps({
   flex-shrink: 0;
 }
 
-.doubt-text {
+.doubt-item div {
   flex: 1;
   min-width: 0;
+}
+
+.doubt-item time {
+  color: #b45309;
+  display: block;
+  font-size: 11px;
+  font-weight: 900;
+  margin-bottom: 5px;
+}
+
+.doubt-item p {
+  margin: 0;
   overflow-wrap: anywhere;
 }
 
-@media (max-width: 720px) {
-  .doubts-grid {
-    grid-template-columns: 1fr;
-  }
+.empty-board {
+  align-items: center;
+  border: 1px dashed #f4cf80;
+  border-radius: 8px;
+  color: #a16207;
+  display: flex;
+  flex: 1;
+  font-size: 13px;
+  font-weight: 700;
+  justify-content: center;
+  min-height: 140px;
 }
 </style>

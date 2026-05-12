@@ -134,6 +134,19 @@ export function useAsrEvents() {
     return finals.value[index]
   }
 
+  function mergeInsightItems(existingItems, incomingItems, limit = 24) {
+    const seen = new Set()
+    const merged = []
+    for (const item of [...existingItems, ...incomingItems]) {
+      const text = String(item?.text || '').trim()
+      if (!text || seen.has(text)) continue
+      seen.add(text)
+      merged.push(item)
+      if (merged.length >= limit) break
+    }
+    return merged
+  }
+
   function shouldAnalyzeTranscript(text) {
     const clean = String(text || '').replace(/\s+/g, '')
     if (clean.length < 8) return false
@@ -276,16 +289,19 @@ export function useAsrEvents() {
                 }
               }
               
-              questions.value = questionsList.slice(0, 3).map((q) => ({
-                id: makeId(),
-                text: q
-              }))
-              
-              doubts.value = analysisRecord.doubts.slice(0, 5).map((q, index) => ({
+              const newQuestions = questionsList.slice(0, 3).map((q) => ({
                 id: makeId(),
                 text: q,
-                index: index + 1
+                time: analysisRecord.time
               }))
+              questions.value = mergeInsightItems(questions.value, newQuestions, 24)
+              
+              const newDoubts = analysisRecord.doubts.slice(0, 5).map((q) => ({
+                id: makeId(),
+                text: q,
+              }))
+              doubts.value = mergeInsightItems(doubts.value, newDoubts, 24)
+                .map((item, index) => ({ ...item, index: index + 1, time: item.time || analysisRecord.time }))
             }
           } catch (e) {
             // 忽略解析错误

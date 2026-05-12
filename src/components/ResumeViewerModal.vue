@@ -923,6 +923,14 @@ function localTermExplanation(term, category = '', context = '') {
   const contextText = String(context || '')
   const glossaryHit = termGlossary.find((item) => item.pattern.test(text))
   if (glossaryHit) return glossaryHit.text
+  if (
+    contextText &&
+    contextText.length >= 8 &&
+    contextText !== text &&
+    !/^(技能|职位|职业|职能|行业|证书|学校|专业|学历|标签|tooltip)$/i.test(contextText)
+  ) {
+    return contextText
+  }
   const rules = [
     [/总账|总账会计/, '负责企业整体账务核算、凭证审核、月结年结、报表出具等工作。面试时可追问是否独立负责过月结、报表和账务调整。'],
     [/税务|纳税|报税|汇算|税控/, '与企业税费申报、税务合规、发票管理和年度汇算清缴有关。可追问申报税种、异常处理和税务风险控制经验。'],
