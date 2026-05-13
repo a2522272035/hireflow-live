@@ -344,43 +344,43 @@
                       </td>
                     </tr>
 
-                    <tr>
+                    <tr v-if="hasProfileCharts">
                       <td colspan="4"><h5 class="row-bordered font-weight-bold mt-3"><span class="mytext-primary r_indent2">▶</span>综合评估</h5></td>
                     </tr>
-                    <tr>
+                    <tr v-if="abilityScores.length">
                       <td colspan="4"><h5 class="text-center mt-3">能力指数</h5></td>
                     </tr>
-                    <tr>
+                    <tr v-if="abilityScores.length">
                       <td colspan="4">
                         <div class="chart-container">
                           <RadarChart :items="abilityScores" />
                         </div>
                       </td>
                     </tr>
-                    <tr>
+                    <tr v-if="industryScores.length">
                       <td colspan="4"><h5 class="text-center mt-3">一级行业</h5></td>
                     </tr>
-                    <tr>
+                    <tr v-if="industryScores.length">
                       <td colspan="4">
                         <div class="chart-container">
                           <RadarChart :items="industryScores" variant="industry" />
                         </div>
                       </td>
                     </tr>
-                    <tr>
+                    <tr v-if="secondaryIndustrySegments.length">
                       <td colspan="4"><h5 class="text-center mt-3">二级行业</h5></td>
                     </tr>
-                    <tr>
+                    <tr v-if="secondaryIndustrySegments.length">
                       <td colspan="4">
                         <div class="chart-container pie-space">
                           <DonutChart :segments="secondaryIndustrySegments" label="二级行业" />
                         </div>
                       </td>
                     </tr>
-                    <tr>
+                    <tr v-if="jobFunctionSegments.length">
                       <td colspan="4"><h5 class="text-center mt-3">职位职能</h5></td>
                     </tr>
-                    <tr>
+                    <tr v-if="jobFunctionSegments.length">
                       <td colspan="4">
                         <div class="chart-container pie-space">
                           <DonutChart :segments="jobFunctionSegments" label="职位职能" half />
@@ -1313,15 +1313,7 @@ const abilityScores = computed(() => {
   ].map(([label, value]) => ({ label, value: normalizeChartValue(value, 0) }))
     .filter((item) => item.value > 0)
   if (fromEval.length >= 4) return fromEval
-
-  return [
-    { label: '教育背景', value: safeScore(profile.value.degree ? 62 + (profile.value.schoolType ? 5 : 0) : 35) },
-    { label: '工作能力', value: safeScore(55 + numberIn(profile.value.workYear) * 4 + Math.min(skills.value.length, 16)) },
-    { label: '管理能力', value: safeScore(45 + (allProfileText.value.includes('管理') ? 18 : 0) + numberIn(profile.value.workYear) * 2) },
-    { label: '社会能力', value: safeScore(52 + experiences.value.length * 8) },
-    { label: '语言能力', value: safeScore(45 + asArray(resumeData.value.languages).length * 15) },
-    { label: '荣誉指数', value: safeScore(45 + certificates.value.length * 10) }
-  ]
+  return []
 })
 
 const industryScores = computed(() => {
@@ -1337,65 +1329,27 @@ const industryScores = computed(() => {
     value: normalizeChartValue(item.weight, 0)
   }))
   if (fromTags.length >= 3) return fromTags
-
-  const explicitIndustries = explicitIndustryLabels()
-  if (explicitIndustries.length) {
-    return explicitIndustries.slice(0, 6).map((label, index) => ({
-      label,
-      value: safeScore(72 - index * 8)
-    }))
-  }
-
-  return [
-    { label: '行业画像待确认', value: 20 },
-    { label: '未返回SDK行业预测', value: 20 },
-    { label: '请结合工作经历判断', value: 20 }
-  ]
+  return []
 })
 
 const secondaryIndustrySegments = computed(() => {
   const fromTags = weightedTagItems('industries_c2', 'industry_c2', 'predicted_industries_c2', 'predicted_industry_c2', 'industries').slice(0, 5)
   if (fromTags.length) return toSegments(fromTags)
-  const explicitIndustries = explicitIndustryLabels()
-  if (explicitIndustries.length) {
-    return toSegments(explicitIndustries.slice(0, 5).map((label, index) => ({ label, weight: Math.max(3, 10 - index * 2) })))
-  }
-  return toSegments([{ label: '暂无SDK行业画像', weight: 1 }])
+  return []
 })
 
 const jobFunctionSegments = computed(() => {
-  const fromTags = weightedTagItems('pos_types').slice(0, 5)
+  const fromTags = weightedTagItems('pos_types', 'position_types', 'predicted_pos_types', 'job_pos_types').slice(0, 5)
   if (fromTags.length) return toSegments(fromTags)
-  const position = profile.value.position || '当前职位'
-  const type = profile.value.workPosType || '职能类型'
-  return toSegments([
-    { label: position, weight: Math.max(6, numberIn(profile.value.workYear) * 5 || 12) },
-    { label: type, weight: Math.max(4, experiences.value.length * 6 || 8) },
-    { label: profile.value.expectJob || '期望职位', weight: Math.max(3, Math.min(skills.value.length, 12)) },
-    { label: '待核验', weight: Math.max(2, riskItems.value.length * 3) }
-  ])
+  return []
 })
 
-const allProfileText = computed(() => [
-  profile.value.position,
-  profile.value.workPosType,
-  profile.value.workCompany,
-  profile.value.summary,
-  skills.value.join(' '),
-  experiences.value.map((item) => `${item.company} ${item.position} ${item.positionType} ${item.industry} ${item.description}`).join(' ')
-].join(' '))
-
-function explicitIndustryLabels() {
-  return uniq([
-    resumeData.value.industry,
-    resumeData.value.work_industry,
-    resumeData.value.expect_industry,
-    raw.value.industry,
-    raw.value.work_industry,
-    raw.value.expect_industry,
-    ...experiences.value.map((item) => item.industry)
-  ]).filter((label) => !/未识别|暂无|其他|unknown/i.test(label))
-}
+const hasProfileCharts = computed(() => (
+  abilityScores.value.length ||
+  industryScores.value.length ||
+  secondaryIndustrySegments.value.length ||
+  jobFunctionSegments.value.length
+))
 
 function ageBucket(age) {
   const value = numberIn(age)
@@ -1411,12 +1365,6 @@ function experienceBucket(years) {
   if (value >= 5) return '5-10年'
   if (value >= 3) return '3-5年'
   return `${value}年`
-}
-
-function keywordWeight(pattern) {
-  const regex = new RegExp(pattern, 'g')
-  const matches = allProfileText.value.match(regex)
-  return matches ? Math.min(matches.length * 8, 55) : 0
 }
 
 function profilerItems(key) {
