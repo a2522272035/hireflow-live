@@ -1325,35 +1325,42 @@ const abilityScores = computed(() => {
 })
 
 const industryScores = computed(() => {
-  const fromTags = weightedTagItems('industries').slice(0, 11).map((item) => ({
+  const fromTags = weightedTagItems(
+    'industries',
+    'industry',
+    'industries_c1',
+    'industry_c1',
+    'predicted_industries_c1',
+    'predicted_industry_c1'
+  ).slice(0, 11).map((item) => ({
     label: item.label,
-    value: normalizeChartValue(item.weight, 40)
+    value: normalizeChartValue(item.weight, 0)
   }))
   if (fromTags.length >= 3) return fromTags
 
+  const explicitIndustries = explicitIndustryLabels()
+  if (explicitIndustries.length) {
+    return explicitIndustries.slice(0, 6).map((label, index) => ({
+      label,
+      value: safeScore(72 - index * 8)
+    }))
+  }
+
   return [
-    { label: '物流/运输', value: safeScore(40 + keywordWeight('物流|运输|供应链')) },
-    { label: '专业服务/教育/培训', value: safeScore(42 + keywordWeight('专业服务|咨询|教育|培训|财会')) },
-    { label: '计算机/互联网/通信/电子', value: safeScore(46 + keywordWeight('平台|运营|互联网|数据|电子')) },
-    { label: '政府/非营利组织/其他', value: safeScore(35 + keywordWeight('行政|政府|公益')) },
-    { label: '广告/媒体', value: safeScore(35 + keywordWeight('广告|媒体|内容')) },
-    { label: '能源/环保/化工', value: safeScore(35 + keywordWeight('能源|环保|化工')) },
-    { label: '房地产/建筑', value: safeScore(35 + keywordWeight('房地产|建筑')) },
-    { label: '贸易/消费/制造/营运', value: safeScore(42 + keywordWeight('贸易|消费|制造|营运|运营')) },
-    { label: '制药/医疗', value: safeScore(38 + keywordWeight('医药|医疗')) },
-    { label: '会计/金融/银行/保险', value: safeScore(42 + keywordWeight('会计|财务|税务|金融|银行|保险')) },
-    { label: '服务业', value: safeScore(42 + keywordWeight('服务')) }
+    { label: '行业画像待确认', value: 20 },
+    { label: '未返回SDK行业预测', value: 20 },
+    { label: '请结合工作经历判断', value: 20 }
   ]
 })
 
 const secondaryIndustrySegments = computed(() => {
-  const fromTags = weightedTagItems('industries').slice(0, 5)
+  const fromTags = weightedTagItems('industries_c2', 'industry_c2', 'predicted_industries_c2', 'predicted_industry_c2', 'industries').slice(0, 5)
   if (fromTags.length) return toSegments(fromTags)
-  return toSegments([
-    { label: '计算机软件', weight: keywordWeight('软件|平台|数据') || 7 },
-    { label: '专业服务', weight: keywordWeight('专业服务|财会|咨询') || 7 },
-    { label: '交通/运输/物流', weight: keywordWeight('交通|运输|物流|供应链') || 7 }
-  ])
+  const explicitIndustries = explicitIndustryLabels()
+  if (explicitIndustries.length) {
+    return toSegments(explicitIndustries.slice(0, 5).map((label, index) => ({ label, weight: Math.max(3, 10 - index * 2) })))
+  }
+  return toSegments([{ label: '暂无SDK行业画像', weight: 1 }])
 })
 
 const jobFunctionSegments = computed(() => {
@@ -1377,6 +1384,18 @@ const allProfileText = computed(() => [
   skills.value.join(' '),
   experiences.value.map((item) => `${item.company} ${item.position} ${item.positionType} ${item.industry} ${item.description}`).join(' ')
 ].join(' '))
+
+function explicitIndustryLabels() {
+  return uniq([
+    resumeData.value.industry,
+    resumeData.value.work_industry,
+    resumeData.value.expect_industry,
+    raw.value.industry,
+    raw.value.work_industry,
+    raw.value.expect_industry,
+    ...experiences.value.map((item) => item.industry)
+  ]).filter((label) => !/未识别|暂无|其他|unknown/i.test(label))
+}
 
 function ageBucket(age) {
   const value = numberIn(age)
@@ -1452,13 +1471,51 @@ function tagGroupsByCategory(category) {
 
 const chartPalette = ['#5b75d6', '#82c66f', '#f8c64d', '#ef5b65', '#7c69ef', '#42ba96', '#f59e0b']
 
-function weightedTagItems(key) {
-  const list = tagsData.value?.[key]
-  if (!Array.isArray(list)) return []
-  return list.map((item) => ({
-    label: item.tag_name || item.name || item.label || '',
-    weight: item.tag_weight ?? item.weight ?? item.value ?? 0
-  })).filter((item) => item.label && Number(item.weight) > 0)
+function weightedTagItems(...keys) {
+  const items = []
+  for (const key of keys) {
+    items.push(
+      ...normalizeWeightedItems(tagsData.value?.[key]),
+      ...normalizeWeightedItems(profilerSource.value?.[key]),
+      ...normalizeWeightedItems(raw.value?.[key]),
+      ...normalizeWeightedItems(resumeData.value?.[key])
+    )
+  }
+  const byLabel = new Map()
+  for (const item of items) {
+    const label = String(item.label || '').trim()
+    if (!label) continue
+    const weight = Number(item.weight) || 0
+    const existing = byLabel.get(label)
+    if (!existing || weight > existing.weight) {
+      byLabel.set(label, { label, weight })
+    }
+  }
+  return Array.from(byLabel.values()).sort((a, b) => b.weight - a.weight)
+}
+
+function normalizeWeightedItems(value, defaultWeight = 55) {
+  if (!value) return []
+  if (typeof value === 'string') {
+    return value.split(/[、,，;；\n]/).map((label) => ({ label: label.trim(), weight: defaultWeight })).filter((item) => item.label)
+  }
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => normalizeWeightedItems(item, defaultWeight))
+  }
+  if (typeof value === 'object') {
+    const label = profileDisplayText(value.tag_name || value.name || value.label || value.text || value.industry || value.title)
+    if (label) {
+      return [{
+        label,
+        weight: value.tag_weight ?? value.weight ?? value.score ?? value.prob ?? value.probability ?? value.confidence ?? value.value ?? defaultWeight
+      }]
+    }
+    return Object.entries(value)
+      .filter(([, weight]) => typeof weight === 'number' || typeof weight === 'string')
+      .map(([label, weight]) => ({ label, weight }))
+      .filter((item) => item.label && Number(item.weight) > 0)
+  }
+  return []
 }
 
 function normalizeChartValue(value, fallback = 35) {
