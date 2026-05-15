@@ -1,21 +1,5 @@
 <template>
   <section class="panel transcript-panel">
-    <header class="panel-header">
-      <div>
-        <p class="eyebrow">实时语音转写</p>
-        <h2>实时转写</h2>
-      </div>
-      <button
-        class="record-button"
-        type="button"
-        :class="{ active: isRecording }"
-        :disabled="recordButtonDisabled"
-        @click="$emit('toggle-recording')"
-      >
-        {{ recordButtonText }}
-      </button>
-    </header>
-
     <div class="status-strip">
       <div class="status-item">
         <span class="label">录音状态</span>

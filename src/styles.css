@@ -25,11 +25,11 @@ select {
 .app-shell {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
   height: 100vh;
   min-width: 320px;
   overflow: hidden;
-  padding: 12px;
+  padding: 10px 12px 12px;
 }
 
 .topbar {
@@ -39,16 +39,17 @@ select {
   border-radius: 8px;
   box-shadow: 0 12px 36px rgba(31, 41, 55, 0.07);
   display: flex;
-  gap: 12px;
+  gap: 8px;
   justify-content: space-between;
   min-height: 0;
-  padding: 10px 14px;
+  padding: 8px 12px;
 }
 
 .brand {
   align-items: center;
   display: flex;
-  gap: 14px;
+  flex: 0 1 220px;
+  gap: 10px;
   min-width: 0;
 }
 
@@ -60,44 +61,157 @@ select {
   background: linear-gradient(135deg, #2563eb, #7c3aed);
   border-radius: 8px;
   box-shadow: 0 8px 18px rgba(79, 70, 229, 0.25);
-  height: 32px;
+  flex: 0 0 auto;
+  height: 28px;
   position: relative;
-  width: 32px;
+  width: 28px;
 }
 
 .brand-mark::after {
   background: rgba(255, 255, 255, 0.55);
   content: "";
-  height: 32px;
-  left: 15px;
+  height: 28px;
+  left: 13px;
   position: absolute;
   top: 0;
   width: 2px;
 }
 
 .brand h1 {
-  font-size: 18px;
+  font-size: 15px;
   line-height: 1.2;
   margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .brand p {
   color: #6b7487;
-  font-size: 12px;
+  font-size: 11px;
   line-height: 1.35;
-  margin: 3px 0 0;
-  overflow-wrap: anywhere;
+  margin: 2px 0 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.topbar-tools {
+  align-items: stretch;
+  display: flex;
+  flex: 0 0 auto;
+  gap: 8px;
+  min-width: 0;
+}
+
+.topbar-card {
+  align-items: center;
+  background: #f8fafc;
+  border: 1px solid #dce5f4;
+  border-radius: 8px;
+  display: flex;
+  gap: 8px;
+  min-height: 43px;
+  min-width: 0;
+  padding: 6px 8px;
+}
+
+.topbar-card > div {
+  min-width: 76px;
+}
+
+.topbar-card span {
+  color: #4f46e5;
+  display: block;
+  font-size: 10px;
+  font-weight: 900;
+  line-height: 1.15;
+  margin-bottom: 2px;
+  white-space: nowrap;
+}
+
+.topbar-card strong {
+  color: #172033;
+  display: block;
+  font-size: 13px;
+  font-weight: 900;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.top-record-button,
+.top-speaker-button {
+  border-radius: 7px;
+  cursor: pointer;
+  flex: 0 0 auto;
+  font-size: 12px;
+  font-weight: 900;
+  height: 30px;
+  padding: 0 9px;
+  white-space: nowrap;
+}
+
+.top-record-button {
+  background: #4f46e5;
+  border: 1px solid #4f46e5;
+  color: #ffffff;
+}
+
+.top-record-button.active {
+  background: #ef4444;
+  border-color: #ef4444;
+}
+
+.top-record-button:disabled {
+  cursor: default;
+  opacity: 0.88;
+}
+
+.top-speaker-button {
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  color: #1d4ed8;
+}
+
+.top-speaker-button:hover {
+  background: #dbeafe;
+}
+
+.top-ai-status {
+  align-items: center;
+  background: #f2f5fa;
+  border-radius: 999px;
+  color: #647086;
+  display: inline-flex;
+  flex: 0 0 auto;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 900;
+  height: 30px;
+  padding: 0 9px;
+  white-space: nowrap;
+}
+
+.top-ai-status.loading {
+  background: #fff7e6;
+  color: #b06500;
 }
 
 .session-meta {
   align-items: center;
   color: #4b5567;
   display: flex;
-  flex-wrap: wrap;
-  gap: 9px;
-  font-size: 13px;
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
+  gap: 8px;
+  font-size: 12px;
   justify-content: flex-end;
   min-width: 0;
+}
+
+.session-meta > span,
+.session-meta > strong {
+  white-space: nowrap;
 }
 
 .session-meta strong {
@@ -111,9 +225,10 @@ select {
   border-radius: 8px;
   color: #ef4444;
   cursor: pointer;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 700;
-  padding: 7px 10px;
+  padding: 6px 9px;
+  white-space: nowrap;
 }
 
 .danger-button:disabled {
@@ -127,9 +242,9 @@ select {
   border-radius: 8px;
   color: #334155;
   cursor: pointer;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 700;
-  padding: 7px 10px;
+  padding: 6px 9px;
 }
 
 .secondary-button:hover {
@@ -142,9 +257,10 @@ select {
   border-radius: 8px;
   color: #047857;
   cursor: pointer;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 700;
-  padding: 7px 10px;
+  padding: 6px 9px;
+  white-space: nowrap;
 }
 
 .test-button:hover {
@@ -172,55 +288,65 @@ select {
   opacity: 0.6;
 }
 
-.progress-banner {
-  background: rgba(255, 255, 255, 0.96);
+.topbar-progress {
+  background: #f8fafc;
   border: 1px solid #dce5f4;
   border-radius: 8px;
-  box-shadow: 0 8px 20px rgba(31, 41, 55, 0.05);
-  padding: 9px 12px;
+  flex: 1 1 260px;
+  max-width: 420px;
+  min-width: 190px;
+  padding: 6px 9px 7px;
 }
 
-.progress-header {
+.topbar-progress-main {
   align-items: center;
   display: flex;
-  gap: 12px;
+  gap: 10px;
   justify-content: space-between;
+  min-width: 0;
 }
 
-.progress-header span {
+.topbar-progress-main > div {
+  min-width: 0;
+}
+
+.topbar-progress-main span {
   color: #172033;
   display: block;
-  font-size: 13px;
-  font-weight: 800;
-  line-height: 1.35;
-}
-
-.progress-header p {
-  color: #647086;
   font-size: 12px;
-  line-height: 1.35;
-  margin: 2px 0 0;
+  font-weight: 800;
+  line-height: 1.25;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.progress-header strong {
+.topbar-progress-main p {
+  color: #647086;
+  font-size: 11px;
+  line-height: 1.25;
+  margin: 1px 0 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.topbar-progress-main strong {
   color: #2563eb;
   flex: 0 0 auto;
-  font-size: 16px;
+  font-size: 14px;
   font-variant-numeric: tabular-nums;
 }
 
-.progress-track {
+.topbar-progress-track {
   background: #edf2fb;
   border-radius: 999px;
-  height: 6px;
-  margin-top: 8px;
+  height: 5px;
+  margin-top: 5px;
   overflow: hidden;
 }
 
-.progress-track span {
+.topbar-progress-track i {
   background: linear-gradient(90deg, #2563eb, #22c55e);
   border-radius: inherit;
   display: block;
@@ -279,6 +405,7 @@ select {
   flex: 1;
   gap: 12px;
   grid-template-columns: minmax(320px, 0.72fr) minmax(620px, 1.28fr);
+  height: 0;
   min-height: 0;
   overflow: hidden;
 }
@@ -290,9 +417,10 @@ select {
   box-shadow: 0 18px 48px rgba(31, 41, 55, 0.08);
   display: flex;
   flex-direction: column;
+  height: 100%;
   min-height: 0;
   overflow: hidden;
-  padding: 12px;
+  padding: 10px;
 }
 
 .panel-header {
@@ -530,7 +658,24 @@ select {
   .topbar {
     align-items: flex-start;
     flex-direction: column;
-    gap: 12px;
+    gap: 8px;
+  }
+
+  .brand,
+  .topbar-tools,
+  .topbar-progress {
+    flex: 0 0 auto;
+    max-width: none;
+    width: 100%;
+  }
+
+  .topbar-tools {
+    flex-wrap: wrap;
+  }
+
+  .session-meta {
+    flex-wrap: wrap;
+    justify-content: flex-start;
   }
 
   .panel {

@@ -1,16 +1,5 @@
 <template>
   <section class="panel ai-panel">
-    <header class="panel-header">
-      <div>
-        <p class="eyebrow">AI面试辅助</p>
-        <h2>分析与追问</h2>
-      </div>
-      <span class="ai-status" :class="{ loading }">
-        <span class="status-dot"></span>
-        {{ loading ? 'AI分析中' : '待命' }}
-      </span>
-    </header>
-
     <div v-if="showWorkbench" class="ai-workbench" :class="{ loading }">
       <div v-if="resumeTags.length" class="resume-hit-strip">
         <strong>简历命中</strong>
@@ -25,29 +14,60 @@
       </div>
     </div>
 
-    <div ref="messageListRef" class="message-list">
-      <article
-        v-for="message in messages"
-        :key="message.id"
-        class="chat-message"
-        :class="message.type"
-      >
-        <div class="message-meta">
-          <span>{{ message.type === 'ai' ? 'AI' : message.type === 'system' ? '系统' : '面试官' }}</span>
-          <time>{{ message.time }}</time>
-        </div>
-        <p class="message-content">{{ message.content }}</p>
-      </article>
+    <div ref="messageListRef" class="exam-sheet" :class="{ empty: examItems.length === 0 }">
+      <section v-if="examItems.length" class="exam-paper">
+        <article
+          v-for="(item, index) in examItems"
+          :key="item.id"
+          class="exam-item"
+        >
+          <header class="problem-head">
+            <div>
+              <span>第 {{ index + 1 }} 题</span>
+              <time>{{ item.time }}</time>
+            </div>
+            <strong>{{ item.partCount > 1 ? `面试官题目 · 已合并 ${item.partCount} 句` : '面试官题目' }}</strong>
+          </header>
+          <p class="problem-text">{{ item.question }}</p>
 
-      <div v-if="messages.length === 0" class="empty-state">
-        等待面试片段。收到完整语句后会自动生成分析和追问。
+          <section class="answer-block">
+            <div class="answer-head">
+              <span>面试者作答</span>
+              <small>{{ item.answers.length }} 段回答</small>
+            </div>
+            <div v-if="item.answers.length" class="answer-lines">
+              <p v-for="answer in item.answers" :key="answer.id">{{ answer.text }}</p>
+            </div>
+            <div v-else class="answer-empty">等待面试者作答...</div>
+          </section>
+
+          <section v-if="item.analysis" class="marking-block">
+            <div class="marking-head">
+              <span>AI 批注</span>
+              <small>{{ item.analysis.time }}</small>
+            </div>
+            <p>{{ item.analysis.analysis }}</p>
+            <ul v-if="item.analysis.doubts?.length">
+              <li v-for="doubt in item.analysis.doubts" :key="doubt">{{ doubt }}</li>
+            </ul>
+          </section>
+        </article>
+      </section>
+
+      <section v-else class="exam-empty">
+        <strong>等待第一道面试题</strong>
+        <p>腾讯说话人分离识别到面试官发问后，会在这里形成题目；候选人的回答会自动排在题目下面。</p>
+      </section>
+    </div>
+
+    <section class="exam-side-notes">
+      <div class="note-panel">
+        <DoubtsList :doubts="doubts" />
       </div>
-    </div>
-
-    <div class="decision-board">
-      <DoubtsList :doubts="doubts" />
-      <QuestionList :questions="questions" :loading="loading" />
-    </div>
+      <div class="note-panel">
+        <QuestionList :questions="questions" :loading="loading" />
+      </div>
+    </section>
   </section>
 </template>
 
@@ -66,6 +86,14 @@ const props = defineProps({
     default: () => []
   },
   questions: {
+    type: Array,
+    default: () => []
+  },
+  interviewerQuestions: {
+    type: Array,
+    default: () => []
+  },
+  interviewTurns: {
     type: Array,
     default: () => []
   },
@@ -100,6 +128,83 @@ const resumeTags = computed(() => {
 })
 
 const showWorkbench = computed(() => resumeTags.value.length > 0 || props.analyses.length > 0 || props.questions.length > 0 || props.doubts.length > 0 || props.loading)
+
+const interviewerMessages = computed(() => props.messages.filter((message) => message.type === 'interviewer'))
+const aiAnalyses = computed(() => props.analyses)
+
+const examItems = computed(() => {
+  if (props.interviewTurns.length > 0) {
+    return props.interviewTurns
+      .filter((turn) => turn?.question || turn?.answers?.length)
+      .map((turn, index) => {
+        const answers = Array.isArray(turn.answers)
+          ? turn.answers
+              .map((answer) => ({
+                id: answer.id || answer.sourceId || `${turn.id}-answer-${index}`,
+                text: answer.text || '',
+                time: answer.time || ''
+              }))
+              .filter((answer) => answer.text)
+          : []
+        const latestAnalysis = aiAnalyses.value
+          .filter((analysis) => {
+            if (analysis.turnId && analysis.turnId === turn.id) return true
+            return answers.some((answer) => analysis.answerId === answer.id || analysis.sourceId === answer.id)
+          })
+          .at(-1)
+
+        return {
+          id: turn.id || `turn-${index}`,
+          question: turn.question || '未匹配到面试官题目',
+          time: turn.time || '',
+          partCount: turn.questionParts?.length || 1,
+          answers,
+          analysis: latestAnalysis || null
+        }
+      })
+  }
+
+  const questions = props.interviewerQuestions.length
+    ? props.interviewerQuestions
+    : interviewerMessages.value.map((message) => ({
+      id: message.id,
+      text: message.content,
+      time: message.time
+    }))
+
+  if (questions.length === 0) return []
+
+  return questions.map((question, index) => {
+    const nextQuestion = questions[index + 1]
+    const answers = aiAnalyses.value
+      .filter((analysis) => {
+        const time = analysis.time || ''
+        if (!question.time || !time) return index === questions.length - 1
+        if (time < question.time) return false
+        if (nextQuestion?.time && time >= nextQuestion.time) return false
+        return true
+      })
+      .map((analysis) => ({
+        id: analysis.id,
+        text: analysis.transcript || analysis.analysis || '',
+        time: analysis.time
+      }))
+      .filter((answer) => answer.text)
+
+    const latestAnalysis = aiAnalyses.value
+      .filter((analysis) => answers.some((answer) => answer.id === analysis.id))
+      .at(-1)
+
+    return {
+      id: question.id,
+      question: question.text,
+      time: question.time,
+      partCount: question.partCount || 1,
+      answers,
+      analysis: latestAnalysis || null
+    }
+  })
+})
 
 const analysisStats = computed(() => {
   const stats = []
@@ -155,7 +260,7 @@ function readSkills(value) {
 }
 
 watch(
-  () => props.messages.length,
+  () => [props.messages.length, props.analyses.length, props.interviewerQuestions.length, props.interviewTurns.length],
   async () => {
     await nextTick()
     if (messageListRef.value) {
@@ -167,7 +272,7 @@ watch(
 
 <style scoped>
 .ai-panel {
-  gap: 10px;
+  gap: 8px;
   min-height: 0;
   overflow: hidden;
 }
@@ -182,6 +287,28 @@ watch(
   font-weight: 700;
   gap: 8px;
   padding: 8px 12px;
+}
+
+.panel-actions {
+  align-items: center;
+  display: flex;
+  flex: 0 0 auto;
+  gap: 8px;
+}
+
+.speaker-test-button {
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  color: #1d4ed8;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 900;
+  padding: 8px 11px;
+}
+
+.speaker-test-button:hover {
+  background: #dbeafe;
 }
 
 .ai-status.loading {
@@ -277,80 +404,222 @@ watch(
   margin-top: 3px;
 }
 
-.message-list {
-  background: #fbfdff;
-  border: 1px solid #edf2f7;
-  border-radius: 10px;
-  display: flex;
-  flex: 0 1 32%;
-  flex-direction: column;
-  gap: 8px;
+.exam-sheet {
+  background: #fffdf8;
+  border: 1px solid #eadfcb;
+  border-radius: 8px;
+  flex: 1 1 180px;
   min-height: 0;
   overflow: auto;
-  padding: 8px;
+  padding: 14px;
 }
 
-.chat-message {
-  border: 1px solid #e7ebf2;
+.exam-sheet.empty {
+  flex: 0 0 auto;
+  overflow: hidden;
+  padding: 10px 12px;
+}
+
+.exam-paper {
+  display: grid;
+  gap: 14px;
+}
+
+.exam-item {
+  background:
+    linear-gradient(#fffaf0 31px, rgba(148, 163, 184, 0.18) 32px),
+    #fffaf0;
+  background-size: 100% 32px;
+  border: 1px solid #ead7b8;
+  border-left: 4px solid #2563eb;
   border-radius: 8px;
-  padding: 9px 10px;
+  box-shadow: 0 8px 22px rgba(120, 80, 20, 0.06);
+  padding: 14px 16px 16px;
 }
 
-.chat-message.ai {
-  background: #f6fffa;
-  border-color: #cdeedc;
-}
-
-.chat-message.interviewer {
-  background: #f7f5ff;
-  border-color: #ddd7ff;
-}
-
-.message-meta {
+.problem-head,
+.answer-head,
+.marking-head {
   align-items: center;
-  color: #7b8497;
   display: flex;
-  font-size: 11px;
-  font-weight: 700;
   justify-content: space-between;
-  margin-bottom: 6px;
 }
 
-.chat-message p {
-  color: #1f2937;
-  font-size: 13px;
-  line-height: 1.55;
-  margin: 0;
+.problem-head {
+  border-bottom: 1px solid #ead7b8;
+  margin-bottom: 10px;
+  padding-bottom: 8px;
+}
+
+.problem-head div {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+}
+
+.problem-head span {
+  background: #1d4ed8;
+  border-radius: 6px;
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 900;
+  padding: 3px 8px;
+}
+
+.problem-head strong {
+  color: #92400e;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.problem-head time,
+.answer-head small,
+.marking-head small {
+  color: #8a6a3d;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.problem-text {
+  color: #111827;
+  font-size: 15px;
+  font-weight: 900;
+  line-height: 1.65;
+  margin: 0 0 12px;
   overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
 
-.empty-state {
-  align-items: center;
-  background: #f8fafc;
-  border: 1px dashed #d7deeb;
+.answer-block {
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid #e8dcc5;
   border-radius: 8px;
-  color: #8c96aa;
-  display: flex;
-  flex: 1;
-  font-size: 14px;
-  justify-content: center;
-  min-height: 180px;
-  padding: 24px;
-  text-align: center;
+  padding: 10px 12px;
 }
 
-.decision-board {
+.answer-head span,
+.marking-head span {
+  color: #334155;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.answer-lines {
   display: grid;
-  flex: 1 1 360px;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.answer-lines p {
+  color: #172033;
+  font-size: 14px;
+  line-height: 1.75;
+  margin: 0;
+  overflow-wrap: anywhere;
+  padding-left: 16px;
+  position: relative;
+}
+
+.answer-lines p::before {
+  background: #22c55e;
+  border-radius: 50%;
+  content: "";
+  height: 6px;
+  left: 0;
+  position: absolute;
+  top: 10px;
+  width: 6px;
+}
+
+.answer-empty {
+  align-items: center;
+  background: #ffffff;
+  border: 1px dashed #d8c8aa;
+  border-radius: 8px;
+  color: #9a7a4c;
+  display: flex;
+  font-size: 13px;
+  justify-content: center;
+  margin-top: 8px;
+  min-height: 54px;
+}
+
+.marking-block {
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-radius: 8px;
+  margin-top: 10px;
+  padding: 10px 12px;
+}
+
+.marking-block p {
+  color: #14532d;
+  font-size: 13px;
+  line-height: 1.65;
+  margin: 8px 0 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.marking-block ul {
+  color: #166534;
+  font-size: 13px;
+  line-height: 1.55;
+  margin: 8px 0 0;
+  padding-left: 18px;
+}
+
+.exam-empty {
+  align-items: center;
+  background: #fffaf0;
+  border: 1px dashed #d8c8aa;
+  border-radius: 8px;
+  color: #7c6a4d;
+  display: flex;
+  gap: 10px;
+  justify-content: flex-start;
+  min-height: 0;
+  padding: 11px 12px;
+  text-align: left;
+}
+
+.exam-empty strong {
+  color: #334155;
+  flex: 0 0 auto;
+  font-size: 15px;
+  white-space: nowrap;
+}
+
+.exam-empty p {
+  font-size: 13px;
+  line-height: 1.45;
+  margin: 0;
+  max-width: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.exam-side-notes {
+  display: grid;
+  flex: 1 1 clamp(420px, 46vh, 560px);
   gap: 10px;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+  min-height: 360px;
+}
+
+.note-panel {
+  height: 100%;
   min-height: 0;
+}
+
+.note-panel > * {
+  height: 100%;
 }
 
 @media (max-width: 720px) {
   .analysis-stats,
-  .decision-board {
+  .exam-side-notes {
     grid-template-columns: 1fr;
   }
 }

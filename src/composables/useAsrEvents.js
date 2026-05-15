@@ -1,5 +1,7 @@
 import { ref } from 'vue'
 
+const QUESTION_MERGE_WINDOW_MS = 18 * 1000
+
 export function useAsrEvents() {
   const asrStatus = ref('未开始')
   const vadStatus = ref('等待录音')
@@ -10,6 +12,8 @@ export function useAsrEvents() {
   const messages = ref([])
   const analyses = ref([])
   const questions = ref([])
+  const interviewerQuestions = ref([])
+  const interviewTurns = ref([])
   const doubts = ref([])
   const aiLoading = ref(false)
   const latestFinal = ref(null)
@@ -39,9 +43,9 @@ export function useAsrEvents() {
       eventSocket = null
     }
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const isLocalDev = ['127.0.0.1', 'localhost'].includes(window.location.hostname) && window.location.port === '5173'
-    const wsUrl = isLocalDev
-      ? `${protocol}//127.0.0.1:8771`
+    const isLocalHost = ['127.0.0.1', 'localhost'].includes(window.location.hostname)
+    const wsUrl = isLocalHost
+      ? `${protocol}//${window.location.hostname}:8771`
       : `${protocol}//${window.location.host}/ws`
     return new Promise((resolve, reject) => {
       const socket = new WebSocket(wsUrl)
@@ -119,6 +123,8 @@ export function useAsrEvents() {
     messages.value = []
     analyses.value = []
     questions.value = []
+    interviewerQuestions.value = []
+    interviewTurns.value = []
     doubts.value = []
     aiLoading.value = false
     latestFinal.value = null
@@ -147,6 +153,178 @@ export function useAsrEvents() {
     return merged
   }
 
+  function sameText(a, b) {
+    return String(a || '').replace(/\s+/g, '') === String(b || '').replace(/\s+/g, '')
+  }
+
+  function upsertInterviewerQuestion(turn) {
+    if (!turn?.id || !turn.question) return
+    const item = {
+      id: turn.id,
+      text: turn.question,
+      speakerId: turn.speakerId || '',
+      time: turn.time || formatTime(),
+      updatedAt: turn.updatedAt || Date.now(),
+      partCount: turn.questionParts?.length || 1,
+      status: turn.status || 'awaiting_answer'
+    }
+    const index = interviewerQuestions.value.findIndex((question) => question.id === item.id)
+    if (index >= 0) {
+      interviewerQuestions.value[index] = {
+        ...interviewerQuestions.value[index],
+        ...item
+      }
+    } else {
+      interviewerQuestions.value = [...interviewerQuestions.value, item].slice(-40)
+    }
+  }
+
+  function upsertInterviewerMessage(turn) {
+    if (!turn?.id || !turn.question) return
+    const messageId = `interviewer-message-${turn.id}`
+    const payload = {
+      id: messageId,
+      type: 'interviewer',
+      turnId: turn.id,
+      content: turn.question,
+      time: turn.time || formatTime()
+    }
+    const index = messages.value.findIndex((message) => message.id === messageId)
+    if (index >= 0) {
+      messages.value[index] = {
+        ...messages.value[index],
+        ...payload
+      }
+    } else {
+      messages.value.push(payload)
+    }
+  }
+
+  function shouldMergeInterviewerEntry(entry, turn) {
+    if (!turn) return false
+    if (turn.answers?.length) return false
+    const text = String(entry?.text || '').trim()
+    if (!text) return false
+    if ((turn.questionParts || []).some((part) => sameText(part.text, text))) return true
+    const now = entry?.createdAt || Date.now()
+    const lastUpdated = turn.updatedAt || turn.createdAt || now
+    return now - lastUpdated <= QUESTION_MERGE_WINDOW_MS
+  }
+
+  function rebuildQuestionText(parts) {
+    return parts
+      .map((part) => String(part.text || '').trim())
+      .filter(Boolean)
+      .join('\n')
+  }
+
+  function addOrMergeInterviewerQuestion(entry) {
+    const text = String(entry?.text || '').trim()
+    if (!text) return null
+    const now = entry?.createdAt || Date.now()
+    const lastTurn = interviewTurns.value.at(-1)
+    let turn = null
+
+    if (shouldMergeInterviewerEntry(entry, lastTurn)) {
+      const nextParts = (lastTurn.questionParts || []).some((part) => sameText(part.text, text))
+        ? lastTurn.questionParts
+        : [
+            ...(lastTurn.questionParts || []),
+            {
+              id: entry.id,
+              sourceId: entry.sourceId || '',
+              text,
+              time: entry.time || formatTime(),
+              createdAt: now
+            }
+          ]
+      turn = {
+        ...lastTurn,
+        questionParts: nextParts,
+        question: rebuildQuestionText(nextParts),
+        updatedAt: now,
+        rawEntryIds: [...new Set([...(lastTurn.rawEntryIds || []), entry.id])]
+      }
+      interviewTurns.value[interviewTurns.value.length - 1] = turn
+    } else {
+      const id = `turn-${entry?.sourceId || entry?.id || makeId()}`
+      const part = {
+        id: entry.id,
+        sourceId: entry.sourceId || '',
+        text,
+        time: entry.time || formatTime(),
+        createdAt: now
+      }
+      turn = {
+        id,
+        question: text,
+        questionParts: [part],
+        speakerId: entry?.rawSpeaker || '',
+        time: entry?.time || formatTime(),
+        createdAt: now,
+        updatedAt: now,
+        answers: [],
+        rawEntryIds: [entry.id],
+        status: 'awaiting_answer'
+      }
+      interviewTurns.value.push(turn)
+    }
+
+    upsertInterviewerQuestion(turn)
+    upsertInterviewerMessage(turn)
+    return turn
+  }
+
+  function ensureAnswerTurn(entry) {
+    const lastTurn = interviewTurns.value.at(-1)
+    if (lastTurn) return lastTurn
+    const now = entry?.createdAt || Date.now()
+    const turn = {
+      id: `turn-unmatched-${entry?.sourceId || entry?.id || makeId()}`,
+      question: '未匹配到面试官题目',
+      questionParts: [],
+      speakerId: '',
+      time: entry?.time || formatTime(),
+      createdAt: now,
+      updatedAt: now,
+      answers: [],
+      rawEntryIds: [],
+      status: 'answering'
+    }
+    interviewTurns.value.push(turn)
+    upsertInterviewerQuestion(turn)
+    return turn
+  }
+
+  function attachCandidateAnswer(entry) {
+    const text = String(entry?.text || '').trim()
+    if (!text) return null
+    const now = entry?.createdAt || Date.now()
+    const lastTurn = ensureAnswerTurn(entry)
+    const answers = lastTurn.answers || []
+    const answerId = entry.id || `answer-${makeId()}`
+    const existingIndex = answers.findIndex((answer) => answer.id === answerId || answer.sourceId === entry.sourceId)
+    const answer = {
+      id: answerId,
+      sourceId: entry.sourceId || '',
+      text,
+      time: entry.time || formatTime(),
+      createdAt: now
+    }
+    const nextAnswers = existingIndex >= 0
+      ? answers.map((item, index) => index === existingIndex ? { ...item, ...answer } : item)
+      : [...answers, answer]
+    const nextTurn = {
+      ...lastTurn,
+      answers: nextAnswers,
+      status: 'answering',
+      updatedAt: now,
+      answeredAt: now
+    }
+    interviewTurns.value[interviewTurns.value.length - 1] = nextTurn
+    return { turn: nextTurn, answer }
+  }
+
   function shouldAnalyzeTranscript(text) {
     const clean = String(text || '').replace(/\s+/g, '')
     if (clean.length < 8) return false
@@ -166,17 +344,23 @@ export function useAsrEvents() {
     return cueCount > 0
   }
 
-  function buildAnalysisTextForEntry(entry) {
+  function buildAnalysisTextForEntry(entry, turn = null) {
     const recentTranscript = finals.value
       .filter((item) => item.text && !item.pending)
       .slice(-6)
-      .map((item) => `${item.time || ''} 转写：${item.text}`)
+      .map((item) => `${item.time || ''} ${item.speakerLabel || (item.speaker === 'interviewer' ? '面试官' : '候选人')}：${item.text}`)
+      .join('\n')
+    const recentQuestions = interviewerQuestions.value
+      .slice(-8)
+      .map((item, index) => `${index + 1}. ${item.text}`)
       .join('\n')
     return [
+      turn?.question ? `当前面试官题目：\n${turn.question}` : '',
+      recentQuestions ? `面试官已提出的问题/追问：\n${recentQuestions}` : '',
       `最近面试转写：\n${recentTranscript}`,
-      `重点片段：\n${entry.text}`,
-      '请判断其中是否存在可评估的候选人回答；如果主要是面试官提问、寒暄、测试或无关内容，请返回无法判定。'
-    ].join('\n\n')
+      `重点候选人回答：\n${entry.text}`,
+      '请只分析候选人的回答；面试官问题仅作为上下文，不要当作候选人回答评分。'
+    ].filter(Boolean).join('\n\n')
   }
 
   function buildAnalysisMessage(result) {
@@ -200,7 +384,7 @@ export function useAsrEvents() {
     return displayContent
   }
 
-  async function triggerAiAnalysis(text, triggerType = 'unknown', sourceId = '') {
+  async function triggerAiAnalysis(text, triggerType = 'unknown', sourceId = '', meta = {}) {
     if (!text) return
     
     console.log(`[AI] 触发类型: ${triggerType}, 传递文本:`, text)
@@ -228,7 +412,11 @@ export function useAsrEvents() {
         },
         body: JSON.stringify({
           text: text,
-          history: finals.value.map((item) => item.text)
+          history: finals.value.map((item) => item.text),
+          interviewerQuestions: interviewerQuestions.value.map((item) => item.text),
+          activeQuestion: meta.questionText || '',
+          turnId: meta.turnId || '',
+          answerId: meta.answerId || ''
         })
       })
       
@@ -270,6 +458,10 @@ export function useAsrEvents() {
               const analysisRecord = {
                 id: 'analysis-' + makeId(),
                 sourceId,
+                turnId: meta.turnId || '',
+                answerId: meta.answerId || sourceId,
+                questionText: meta.questionText || '',
+                answerText: meta.answerText || '',
                 triggerType,
                 transcript: text,
                 analysis: data.analysis || '',
@@ -329,7 +521,8 @@ export function useAsrEvents() {
     }
     if (event.type === 'partial') {
       vadStatus.value = 'VAD 检测中'
-      partialText.value = event.text || ''
+      const label = event.speakerLabel || ''
+      partialText.value = label ? `${label}：${event.text || ''}` : (event.text || '')
       return
     }
     if (event.type === 'merge_continue') {
@@ -345,13 +538,20 @@ export function useAsrEvents() {
       pendingUtterances.push(text)
       partialText.value = ''
       currentText.value = text
+      const sourceId = event.sourceId || event.sentenceId || makeId()
+      const createdAt = Date.now()
       const entry = {
         id: makeId(),
+        sourceId,
         text: text,
-        speaker: 'unknown',
-        speakerLabel: '待识别',
-        roleStatus: 'pending',
+        speaker: event.speaker || 'unknown',
+        speakerLabel: event.speakerLabel || '待识别',
+        rawSpeaker: event.rawSpeaker || '',
+        roleStatus: event.roleStatus || 'pending',
+        roleSource: event.roleSource || 'tencent_speaker_id',
+        roleConfidence: event.roleConfidence || 0,
         time: formatTime(),
+        createdAt,
         pending: true
       }
       finals.value.push(entry)
@@ -363,11 +563,23 @@ export function useAsrEvents() {
       vadStatus.value = '等待下一个语句'
       const text = event.text || ''
       if (pendingUtterances.length > 0) {
-        const lastIdx = finals.value.length - 1
+        const sourceId = event.sourceId || event.sentenceId || ''
+        const matchedIdx = sourceId
+          ? finals.value.findIndex((item) => item.pending && item.sourceId === sourceId)
+          : -1
+        const lastIdx = matchedIdx >= 0 ? matchedIdx : finals.value.length - 1
         if (lastIdx >= 0 && finals.value[lastIdx].pending) {
           finals.value[lastIdx] = {
             ...finals.value[lastIdx],
             text: text,
+            speaker: event.speaker || finals.value[lastIdx].speaker || 'unknown',
+            speakerLabel: event.speakerLabel || finals.value[lastIdx].speakerLabel || '待识别',
+            rawSpeaker: event.rawSpeaker || finals.value[lastIdx].rawSpeaker || '',
+            roleStatus: event.roleStatus || finals.value[lastIdx].roleStatus || 'confirmed',
+            roleSource: event.roleSource || finals.value[lastIdx].roleSource || 'tencent_speaker_id',
+            roleConfidence: event.roleConfidence || finals.value[lastIdx].roleConfidence || 0,
+            createdAt: finals.value[lastIdx].createdAt || Date.now(),
+            confirmedAt: Date.now(),
             pending: false
           }
         }
@@ -376,19 +588,31 @@ export function useAsrEvents() {
       currentText.value = ''
       partialText.value = ''
       asrStatus.value = '✓ 已确认句子'
-      const entry = finals.value[finals.value.length - 1]
+      const sourceId = event.sourceId || event.sentenceId || ''
+      const entry = sourceId
+        ? finals.value.find((item) => item.sourceId === sourceId)
+        : finals.value[finals.value.length - 1]
       if (entry && !entry.pending) {
-        updateFinalEntry(entry.id, {
-          speaker: 'unknown',
-          speakerLabel: '转写片段',
-          roleStatus: 'unclassified',
-          roleSource: 'none',
-          roleConfidence: 0,
-          roleReason: '实时阶段不使用 DeepSeek 判断说话人'
-        })
-        if (shouldAnalyzeTranscript(entry.text)) {
+        if (entry.speaker === 'interviewer') {
+          addOrMergeInterviewerQuestion(entry)
+          return
+        }
+        if (entry.speaker === 'candidate' && shouldAnalyzeTranscript(entry.text)) {
+          const linked = attachCandidateAnswer(entry)
           latestFinal.value = entry
-          triggerAiAnalysis(buildAnalysisTextForEntry(entry), 'sentence_done', entry.id)
+          triggerAiAnalysis(
+            buildAnalysisTextForEntry(entry, linked?.turn),
+            'sentence_done',
+            entry.id,
+            {
+              turnId: linked?.turn?.id || '',
+              answerId: linked?.answer?.id || entry.id,
+              questionText: linked?.turn?.question || '',
+              answerText: entry.text
+            }
+          )
+        } else if (entry.speaker === 'candidate') {
+          attachCandidateAnswer(entry)
         }
       }
       return
@@ -476,6 +700,8 @@ export function useAsrEvents() {
     messages,
     analyses,
     questions,
+    interviewerQuestions,
+    interviewTurns,
     doubts,
     aiLoading,
     connect,

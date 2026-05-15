@@ -9,6 +9,50 @@
         </div>
       </div>
 
+      <div class="topbar-tools">
+        <section class="topbar-card">
+          <div>
+            <span>实时语音转写</span>
+            <strong>实时转写</strong>
+          </div>
+          <button
+            type="button"
+            class="top-record-button"
+            :class="{ active: recordingStatus === 'recording' }"
+            :disabled="topRecordButtonDisabled"
+            @click="toggleRecording"
+          >
+            {{ topRecordButtonText }}
+          </button>
+        </section>
+
+        <section class="topbar-card ai-card">
+          <div>
+            <span>AI面试辅助</span>
+            <strong>分析与追问</strong>
+          </div>
+          <button type="button" class="top-speaker-button" @click="openSpeakerTest">
+            语音测试
+          </button>
+          <em class="top-ai-status" :class="{ loading: aiLoading }">
+            {{ aiLoading ? 'AI分析中' : '待命' }}
+          </em>
+        </section>
+      </div>
+
+      <section v-if="workflowProgress.visible" class="topbar-progress" aria-live="polite">
+        <div class="topbar-progress-main">
+          <div>
+            <span>{{ workflowProgress.title }}</span>
+            <p>{{ workflowProgress.detail }}</p>
+          </div>
+          <strong>{{ workflowProgress.percent }}%</strong>
+        </div>
+        <div class="topbar-progress-track">
+          <i :style="{ width: `${workflowProgress.percent}%` }"></i>
+        </div>
+      </section>
+
       <div class="session-meta">
         <ResumeUpload
           :key="sessionId"
@@ -33,28 +77,6 @@
       </div>
     </header>
 
-    <section v-if="workflowProgress.visible" class="progress-banner" aria-live="polite">
-      <div class="progress-header">
-        <div>
-          <span>{{ workflowProgress.title }}</span>
-          <p>{{ workflowProgress.detail }}</p>
-        </div>
-        <strong>{{ workflowProgress.percent }}%</strong>
-      </div>
-      <div class="progress-track">
-        <span :style="{ width: `${workflowProgress.percent}%` }"></span>
-      </div>
-      <ol class="progress-steps">
-        <li
-          v-for="step in progressSteps"
-          :key="step.key"
-          :class="{ active: workflowProgress.step === step.key, done: step.order < workflowProgress.order }"
-        >
-          {{ step.label }}
-        </li>
-      </ol>
-    </section>
-
     <section class="workspace">
       <TranscriptPanel
         :recording-status="recordingStatus"
@@ -67,7 +89,6 @@
         :current-text="currentText"
         :finals="finals"
         :mode="asrMode"
-        @toggle-recording="toggleRecording"
         @set-mode="setMode"
       />
 
@@ -75,6 +96,8 @@
         :messages="messages"
         :analyses="analyses"
         :questions="questions"
+        :interviewer-questions="interviewerQuestions"
+        :interview-turns="interviewTurns"
         :doubts="doubts"
         :resume="loadedResume"
         :loading="aiLoading"
@@ -241,6 +264,13 @@ const displayJobTitle = computed(() => {
     : '运营专员（平台运营方向）'
 })
 const demoButtonText = computed(() => testModeRunning.value ? '停止演示' : '演示测试')
+const topRecordButtonDisabled = computed(() => ['recording', 'finalizing', 'finished'].includes(recordingStatus.value))
+const topRecordButtonText = computed(() => {
+  if (recordingStatus.value === 'recording') return '全程录音中'
+  if (recordingStatus.value === 'finalizing') return '生成报告中'
+  if (recordingStatus.value === 'finished') return '面试已结束'
+  return '开始面试录音'
+})
 const reportCandidateName = computed(() => {
   const resume = completedReport.value?.snapshot?.resume
   return resume?.name || completedReport.value?.report?.assessment?.candidate_name || '候选人'
@@ -280,7 +310,7 @@ const { micStatus, sendingAudio, volumeLevel, start: startMic, stop: stopMic } =
 const {
   asrStatus, vadStatus, semanticStatus,
   partialText, currentText, finals,
-  messages, analyses, questions, doubts, aiLoading,
+  messages, analyses, questions, interviewerQuestions, interviewTurns, doubts, aiLoading,
   connect: connectEvents, disconnect: disconnectEvents,
   sendAudio, switchMode, resetAsrState
 } = useAsrEvents()
@@ -303,6 +333,13 @@ async function setMode(mode) {
   await switchMode(mode)
 }
 
+function openSpeakerTest() {
+  const popup = window.open('/speaker-test', '_blank', 'noopener,noreferrer,width=1280,height=820')
+  if (!popup) {
+    window.location.href = '/speaker-test'
+  }
+}
+
 onMounted(() => {
   restoreSavedSession()
   loadWecomRecipients()
@@ -316,7 +353,7 @@ onBeforeUnmount(() => {
 })
 
 watch(
-  [finals, messages, analyses, loadedResume, recordingStatus],
+  [finals, messages, analyses, interviewerQuestions, interviewTurns, loadedResume, recordingStatus],
   () => persistSession(),
   { deep: true }
 )
@@ -644,7 +681,8 @@ function runDemoScript() {
       delay,
       speaker: 'interviewer',
       label: '面试官',
-      text: item.question
+      text: item.question,
+      onDone: (entry) => addDemoQuestionTurn(item, entry, index)
     })
     delay = scheduleDemoSpeech({
       delay,
@@ -675,6 +713,7 @@ function buildInstantDemoSession(resume = loadedResume.value, options = {}) {
   const demoFinals = []
   const demoAnalyses = []
   const demoMessages = []
+  const demoInterviewTurns = []
 
   turns.forEach((turn, index) => {
     const questionTime = formatClock(createdAt + index * 90000)
@@ -694,8 +733,19 @@ function buildInstantDemoSession(resume = loadedResume.value, options = {}) {
       time: answerTime
     })
     const analysisRecord = createDemoAnalysisRecord(turn, answerEntry, index, formatClock(createdAt + index * 90000 + 30000))
+    const demoTurn = createDemoTurn(turn, questionEntry, index)
+    const demoAnswer = createDemoAnswer(answerEntry)
+    demoTurn.answers.push(demoAnswer)
+    demoTurn.status = 'answering'
+    demoTurn.answeredAt = createdAt + index * 90000 + 18000
+    demoTurn.updatedAt = demoTurn.answeredAt
+    analysisRecord.turnId = demoTurn.id
+    analysisRecord.answerId = demoAnswer.id
+    analysisRecord.questionText = demoTurn.question
+    analysisRecord.answerText = demoAnswer.text
     demoFinals.push(questionEntry, answerEntry)
     demoAnalyses.push(analysisRecord)
+    demoInterviewTurns.push(demoTurn)
     demoMessages.push({
       id: makeDemoId('ai'),
       type: 'ai',
@@ -721,6 +771,15 @@ function buildInstantDemoSession(resume = loadedResume.value, options = {}) {
     finals: demoFinals.map(normalizeTranscriptEntry),
     messages: demoMessages,
     analyses: demoAnalyses,
+    interviewerQuestions: demoInterviewTurns.map((turn) => ({
+      id: turn.id,
+      text: turn.question,
+      speakerId: '',
+      time: turn.time,
+      partCount: 1,
+      status: turn.status
+    })),
+    interviewTurns: demoInterviewTurns,
     recordingStatus: 'stopped',
     updatedAt: Date.now(),
     reportType: '测试报告'
@@ -748,6 +807,8 @@ function loadDemoSessionToUi(demoSession) {
   finals.value = snapshot.finals
   messages.value = snapshot.messages
   analyses.value = snapshot.analyses
+  interviewerQuestions.value = snapshot.interviewerQuestions || []
+  interviewTurns.value = snapshot.interviewTurns || []
   questions.value = demoSession.questions
   doubts.value = demoSession.doubts
   aiLoading.value = false
@@ -970,6 +1031,58 @@ function scheduleDemoSpeech({ delay, speaker, label, text, onDone }) {
   return delay + speechDuration + 1200
 }
 
+function createDemoTurn(question, entry, index = 0) {
+  const now = Date.now()
+  return {
+    id: `turn-demo-${question.id || index}-${entry.id}`,
+    question: question.question,
+    questionParts: [{
+      id: entry.id,
+      sourceId: entry.id,
+      text: question.question,
+      time: entry.time,
+      createdAt: now
+    }],
+    speakerId: '',
+    time: entry.time,
+    createdAt: now,
+    updatedAt: now,
+    answers: [],
+    rawEntryIds: [entry.id],
+    status: 'awaiting_answer'
+  }
+}
+
+function createDemoAnswer(entry) {
+  return {
+    id: entry.id,
+    sourceId: entry.id,
+    text: entry.text,
+    time: entry.time,
+    createdAt: Date.now()
+  }
+}
+
+function addDemoQuestionTurn(question, entry, index) {
+  const turn = createDemoTurn(question, entry, index)
+  interviewTurns.value.push(turn)
+  interviewerQuestions.value.push({
+    id: turn.id,
+    text: turn.question,
+    speakerId: '',
+    time: turn.time,
+    partCount: 1,
+    status: turn.status
+  })
+  messages.value.push({
+    id: `interviewer-message-${turn.id}`,
+    type: 'interviewer',
+    turnId: turn.id,
+    content: turn.question,
+    time: turn.time
+  })
+}
+
 function addDemoAnalysis(question, entry, index) {
   aiLoading.value = true
   messages.value.push({
@@ -980,6 +1093,29 @@ function addDemoAnalysis(question, entry, index) {
   })
   scheduleDemo(950, () => {
     const analysisRecord = createDemoAnalysisRecord(question, entry, index)
+    const latestTurn = interviewTurns.value.at(-1)
+    if (latestTurn) {
+      const answer = createDemoAnswer(entry)
+      const nextTurn = {
+        ...latestTurn,
+        answers: [...(latestTurn.answers || []), answer],
+        status: 'answering',
+        answeredAt: Date.now(),
+        updatedAt: Date.now()
+      }
+      interviewTurns.value[interviewTurns.value.length - 1] = nextTurn
+      const questionIndex = interviewerQuestions.value.findIndex((item) => item.id === nextTurn.id)
+      if (questionIndex >= 0) {
+        interviewerQuestions.value[questionIndex] = {
+          ...interviewerQuestions.value[questionIndex],
+          status: nextTurn.status
+        }
+      }
+      analysisRecord.turnId = nextTurn.id
+      analysisRecord.answerId = answer.id
+      analysisRecord.questionText = nextTurn.question
+      analysisRecord.answerText = answer.text
+    }
     const questionList = analysisRecord.questions || []
     const doubtsList = analysisRecord.doubts || []
     analyses.value.push(analysisRecord)
@@ -1132,6 +1268,8 @@ function buildSessionSnapshot(extra = {}) {
     finals: finals.value.map(normalizeTranscriptEntry),
     messages: messages.value,
     analyses: analyses.value,
+    interviewerQuestions: interviewerQuestions.value,
+    interviewTurns: interviewTurns.value,
     recordingStatus: recordingStatus.value,
     updatedAt: Date.now()
   }
@@ -1158,6 +1296,8 @@ function restoreSavedSession() {
     finals.value = Array.isArray(saved.finals) ? saved.finals.map(normalizeTranscriptEntry) : []
     messages.value = Array.isArray(saved.messages) ? saved.messages : []
     analyses.value = Array.isArray(saved.analyses) ? saved.analyses : []
+    interviewerQuestions.value = Array.isArray(saved.interviewerQuestions) ? saved.interviewerQuestions : []
+    interviewTurns.value = Array.isArray(saved.interviewTurns) ? saved.interviewTurns : []
     hasStartedInterview.value = finals.value.length > 0 || messages.value.length > 0
     if (hasStartedInterview.value) {
       const restoredStatus = saved.recordingStatus || 'stopped'

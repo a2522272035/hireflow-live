@@ -3,10 +3,12 @@ import base64
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import gzip
 import hashlib
+import hmac
 import json
 import math
 import mimetypes
 import os
+import random
 import re
 import select
 import shutil
@@ -23,7 +25,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Callable
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlencode, urlparse
 from xml.sax.saxutils import escape
 
 from doubao_asr_final import (
@@ -1934,6 +1936,18 @@ def safe_wecom_report_name(pdf_path: Path, snapshot: dict) -> str:
     return name or pdf_path.name
 
 
+def clean_wecom_recipient_text(value: Any, fallback: str = "") -> str:
+    text = str(value or "").strip()
+    if not text:
+        return fallback
+    mojibake_markers = ("闈㈣瘯", "浼佷笟寰", "璇锋浛", "鎹", "�", "\ue1bb", "\ue76d")
+    if any(marker in text for marker in mojibake_markers):
+        if "UserID" in text:
+            return "请替换为企业微信UserID"
+        return fallback or "面试官"
+    return text
+
+
 def parse_wecom_recipients() -> list[dict]:
     raw = (os.getenv("WECOM_REPORT_RECIPIENTS") or "").strip()
     recipients: list[dict] = []
@@ -1948,10 +1962,14 @@ def parse_wecom_recipients() -> list[dict]:
                     user_id = str(item.get("userId") or item.get("userid") or item.get("id") or "").strip()
                     name = str(item.get("name") or item.get("label") or user_id).strip()
                     if user_id:
-                        recipients.append({"name": name or user_id, "userId": user_id})
+                        recipients.append({
+                            "name": clean_wecom_recipient_text(name, user_id),
+                            "userId": clean_wecom_recipient_text(user_id, user_id),
+                        })
                 else:
                     user_id = str(item or "").strip()
                     if user_id:
+                        user_id = clean_wecom_recipient_text(user_id, user_id)
                         recipients.append({"name": user_id, "userId": user_id})
         else:
             for chunk in re.split(r"[,，\n]+", raw):
@@ -1966,11 +1984,16 @@ def parse_wecom_recipients() -> list[dict]:
                     name = user_id = item
                 user_id = user_id.strip()
                 if user_id:
-                    recipients.append({"name": name.strip() or user_id, "userId": user_id})
+                    clean_user_id = clean_wecom_recipient_text(user_id, user_id)
+                    recipients.append({
+                        "name": clean_wecom_recipient_text(name.strip(), clean_user_id),
+                        "userId": clean_user_id,
+                    })
 
     fallback = (os.getenv("WECOM_REPORT_TOUSER") or os.getenv("WECOM_TOUSER") or "").strip()
     for user_id in [item.strip() for item in fallback.split("|") if item.strip()]:
         if not any(item["userId"] == user_id for item in recipients):
+            user_id = clean_wecom_recipient_text(user_id, user_id)
             recipients.append({"name": user_id, "userId": user_id})
     return recipients
 
@@ -2674,7 +2697,177 @@ def dist_file_for(path: str) -> Path | None:
         return None
     if target.is_file():
         return target
+    if "." not in Path(rel_path).name:
+        index_file = (dist_dir / "index.html").resolve()
+        if index_file.is_file():
+            return index_file
     return None
+
+
+TENCENT_ASR_HOST = "asr.cloud.tencent.com"
+TENCENT_ASR_PATH_TEMPLATE = "/asr/v2/{appid}"
+
+
+def env_int(name: str, default: int | None = None) -> int | None:
+    value = os.getenv(name)
+    if value is None or str(value).strip() == "":
+        return default
+    return int(str(value).strip())
+
+
+def env_bool_int(name: str, default: bool = False) -> int:
+    value = os.getenv(name)
+    if value is None:
+        return 1 if default else 0
+    return 1 if str(value).strip().lower() in ("1", "true", "yes", "on") else 0
+
+
+def tencent_credentials() -> tuple[str, str, str]:
+    load_dotenv()
+    appid = os.getenv("TENCENT_APP_ID", "").strip()
+    secret_id = os.getenv("TENCENT_SECRET_ID", "").strip()
+    secret_key = os.getenv("TENCENT_SECRET_KEY", "").strip()
+    missing = []
+    if not appid:
+        missing.append("TENCENT_APP_ID")
+    if not secret_id:
+        missing.append("TENCENT_SECRET_ID")
+    if not secret_key:
+        missing.append("TENCENT_SECRET_KEY")
+    if missing:
+        raise RuntimeError(f"missing environment variables: {', '.join(missing)}")
+    return appid, secret_id, secret_key
+
+
+def build_tencent_asr_url() -> tuple[str, str]:
+    appid, secret_id, secret_key = tencent_credentials()
+    now = int(time.time())
+    engine = os.getenv("TENCENT_ASR_ENGINE", "16k_zh_en_speaker").strip() or "16k_zh_en_speaker"
+    params: dict[str, Any] = {
+        "secretid": secret_id,
+        "timestamp": now,
+        "expired": now + int(os.getenv("TENCENT_EXPIRED_SECONDS", "3600")),
+        "nonce": random.randint(100000, 999999999),
+        "engine_model_type": engine,
+        "voice_id": str(uuid.uuid4()),
+        "voice_format": env_int("TENCENT_VOICE_FORMAT", 1),
+        "needvad": env_int("TENCENT_NEED_VAD", 1),
+        "speaker_diarization": env_int("TENCENT_SPEAKER_DIARIZATION", 1),
+    }
+
+    optional_ints = [
+        "vad_silence_time",
+        "max_speak_time",
+        "noise_threshold",
+        "filter_dirty",
+        "filter_modal",
+        "filter_punc",
+        "convert_num_mode",
+        "emotion_recognition",
+        "word_info",
+    ]
+    for key in optional_ints:
+        env_key = f"TENCENT_{key.upper()}"
+        value = env_int(env_key, None)
+        if value is not None:
+            params[key] = value
+
+    if env_bool_int("TENCENT_ENABLE_SPEAKER_CONTEXT", False):
+        params["enable_speaker_context"] = 1
+        speaker_context_id = os.getenv("TENCENT_SPEAKER_CONTEXT_ID", "").strip()
+        if speaker_context_id:
+            params["speaker_context_id"] = speaker_context_id
+
+    for key, env_key in (
+        ("hotword_id", "TENCENT_HOTWORD_ID"),
+        ("hotword_list", "TENCENT_HOTWORD_LIST"),
+        ("customization_id", "TENCENT_CUSTOMIZATION_ID"),
+        ("replace_text_id", "TENCENT_REPLACE_TEXT_ID"),
+    ):
+        value = os.getenv(env_key, "").strip()
+        if value:
+            params[key] = value
+
+    path = TENCENT_ASR_PATH_TEMPLATE.format(appid=appid)
+    sign_params = "&".join(f"{key}={params[key]}" for key in sorted(params))
+    sign_text = f"{TENCENT_ASR_HOST}{path}?{sign_params}"
+    signature = base64.b64encode(
+        hmac.new(secret_key.encode("utf-8"), sign_text.encode("utf-8"), hashlib.sha1).digest()
+    ).decode("utf-8")
+    url = f"wss://{TENCENT_ASR_HOST}{path}?" + urlencode({**params, "signature": signature})
+    return url, engine
+
+
+def normalize_speaker_id(value: Any) -> str:
+    if value is None:
+        return ""
+    text = str(value).strip()
+    if text in ("", "-1", "None", "none", "null"):
+        return ""
+    return text
+
+
+def tencent_sentence_text(item: dict) -> str:
+    for key in ("text", "sentence", "voice_text_str", "final_sentence", "result"):
+        value = item.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def tencent_sentence_type(item: dict) -> int:
+    if "sentence_type" in item:
+        try:
+            return int(item.get("sentence_type"))
+        except Exception:
+            return 0
+    if "slice_type" in item:
+        try:
+            return 1 if int(item.get("slice_type")) == 2 else 0
+        except Exception:
+            return 0
+    if item.get("final") is True:
+        return 1
+    return 0
+
+
+def iter_tencent_sentences(message: dict):
+    containers: list[Any] = []
+    for key in ("sentences", "result", "data"):
+        value = message.get(key)
+        if value is not None:
+            containers.append(value)
+    if any(key in message for key in ("sentence_type", "slice_type", "sentence", "text", "voice_text_str")):
+        containers.append(message)
+
+    for container in containers:
+        if isinstance(container, dict):
+            for list_key in ("sentence_list", "sentences", "result_list", "slice_list"):
+                items = container.get(list_key)
+                if isinstance(items, list):
+                    for item in items:
+                        if isinstance(item, dict):
+                            yield item
+            if any(key in container for key in ("sentence_type", "slice_type", "sentence", "text", "voice_text_str")):
+                yield container
+        elif isinstance(container, list):
+            for item in container:
+                if isinstance(item, dict):
+                    yield item
+
+
+def looks_like_interviewer_question(text: str) -> bool:
+    clean = re.sub(r"\s+", "", str(text or ""))
+    if not clean:
+        return False
+    if clean.endswith(("?", "？", "吗", "呢")):
+        return True
+    cues = (
+        "请你", "请介绍", "能不能", "能否", "为什么", "怎么", "如何", "什么",
+        "说一下", "讲一下", "举例", "解释", "你觉得", "你认为", "如果",
+        "有没有", "是否", "多少", "哪些", "谈谈",
+    )
+    return any(cue in clean for cue in cues)
 
 
 class WsServer:
@@ -2884,6 +3077,11 @@ class DoubaoSession:
         self.realtime_transcript_lock = threading.Lock()
         self.realtime_finals: list[dict] = []
         self.realtime_index = 0
+        self.provider = "tencent_speaker"
+        self.engine_model_type = os.getenv("TENCENT_ASR_ENGINE", "16k_zh_en_speaker")
+        self.voice_id = ""
+        self.speaker_role_map: dict[str, str] = {}
+        self.speaker_order: list[str] = []
         self.diarization_lock = threading.Lock()
         self.diarization_thread = None
         self.diarization_running = False
@@ -2937,6 +3135,10 @@ class DoubaoSession:
         with self.realtime_transcript_lock:
             self.realtime_finals = []
             self.realtime_index = 0
+        with self.lock:
+            self.speaker_role_map.clear()
+            self.speaker_order.clear()
+            self.voice_id = ""
         with self.diarization_lock:
             self.diarization_thread = None
             self.diarization_running = False
@@ -2965,20 +3167,40 @@ class DoubaoSession:
                 print(f"[AUDIO] saved {self.audio_path}", flush=True)
             except Exception as exc:
                 print(f"[AUDIO] close failed: {exc}", flush=True)
+            if self.provider == "tencent_speaker":
+                result = {
+                    "speaker_calibrated": True,
+                    "finals": self.realtime_finals_snapshot(),
+                    "transcript_path": self.realtime_transcript_path,
+                    "realtime_transcript_path": self.realtime_transcript_path,
+                    "diarization_path": "",
+                    "role_map": dict(self.speaker_role_map),
+                    "reason": "Tencent realtime speaker diarization used.",
+                    "status": "done",
+                }
+                with self.diarization_lock:
+                    self.diarization_result = result
+                    self.diarization_running = False
+                return
             self.start_background_diarization()
 
-    def record_realtime_sentence(self, text: str):
+    def record_realtime_sentence(self, text: str, meta: dict | None = None):
         cleaned = str(text or "").strip()
         if not cleaned:
             return
+        meta = meta or {}
+        speaker = meta.get("speaker") or "unknown"
+        speaker_label = meta.get("speakerLabel") or speaker_label_from_value(speaker)
         timestamp = datetime.now().strftime("%H:%M:%S")
         with self.realtime_transcript_lock:
             self.realtime_index += 1
             entry = {
                 "id": f"realtime-{self.realtime_index}",
                 "text": cleaned,
-                "speaker": "unknown",
-                "speakerLabel": "待识别",
+                "speaker": speaker,
+                "speakerLabel": speaker_label,
+                "rawSpeaker": meta.get("rawSpeaker") or "",
+                "sourceId": meta.get("sourceId") or "",
                 "time": timestamp,
                 "pending": False,
             }
@@ -2988,7 +3210,7 @@ class DoubaoSession:
         if path:
             try:
                 with open(path, "a", encoding="utf-8") as file:
-                    file.write(f"{index}. [{timestamp}] {cleaned}\n")
+                    file.write(f"{index}. [{timestamp}] {speaker_label}: {cleaned}\n")
             except Exception as exc:
                 print(f"[TRANSCRIPT] realtime write failed: {exc}", flush=True)
 
@@ -3119,22 +3341,100 @@ class DoubaoSession:
             return self.speaker_diarization_placeholder()
         return None
 
+    def resolve_speaker_role(self, raw_speaker: Any, text: str = "") -> dict:
+        speaker_id = normalize_speaker_id(raw_speaker)
+        if not speaker_id:
+            return {
+                "speaker": "unknown",
+                "speakerLabel": "待识别",
+                "rawSpeaker": "",
+                "roleStatus": "pending",
+                "roleSource": "tencent_speaker_id",
+                "roleConfidence": 0,
+            }
+
+        with self.lock:
+            if speaker_id in self.speaker_role_map:
+                role = self.speaker_role_map[speaker_id]
+            else:
+                first_role = os.getenv("TENCENT_FIRST_SPEAKER_ROLE", "interviewer").strip().lower()
+                first_role = first_role if first_role in ("interviewer", "candidate") else "interviewer"
+                if not self.speaker_order:
+                    role = first_role
+                elif len(self.speaker_order) == 1:
+                    role = "candidate" if self.speaker_role_map.get(self.speaker_order[0]) == "interviewer" else "interviewer"
+                else:
+                    if looks_like_interviewer_question(text):
+                        role = "interviewer"
+                    else:
+                        role = "candidate"
+                self.speaker_order.append(speaker_id)
+                self.speaker_role_map[speaker_id] = role
+                self.add_event(
+                    "status",
+                    message=f"Tencent speaker {speaker_id} mapped to {'interviewer' if role == 'interviewer' else 'candidate'}.",
+                )
+
+        return {
+            "speaker": role,
+            "speakerLabel": "面试官" if role == "interviewer" else "候选人",
+            "rawSpeaker": speaker_id,
+            "roleStatus": "confirmed",
+            "roleSource": "tencent_speaker_id",
+            "roleConfidence": 0.92,
+        }
+
+    def tencent_event_meta(self, item: dict, text: str) -> dict:
+        speaker_value = item.get("speaker_id", item.get("speakerId", item.get("speaker")))
+        meta = self.resolve_speaker_role(speaker_value, text)
+        source_id = item.get("sentence_id", item.get("id", item.get("index", item.get("seq"))))
+        if source_id is None:
+            source_id = f"{meta.get('rawSpeaker') or 'unknown'}-{item.get('start_time', '')}-{item.get('end_time', '')}-{hash(text)}"
+        meta.update(
+            {
+                "sourceId": str(source_id),
+                "sentenceId": source_id,
+                "startTime": item.get("start_time", item.get("startTime")),
+                "endTime": item.get("end_time", item.get("endTime")),
+            }
+        )
+        return meta
+
     def connect_upstream(self, reset_state: bool):
-        headers = [f"{key}: {value}" for key, value in make_headers(self.resource_id).items()]
         import websocket as ws_module
-        ws = ws_module.create_connection(URL, header=headers, timeout=15)
+
+        url, engine = build_tencent_asr_url()
+        ws = ws_module.create_connection(url, timeout=15)
+        first = ws.recv()
+        if isinstance(first, bytes):
+            first = first.decode("utf-8", errors="replace")
+        try:
+            payload = json.loads(first)
+        except Exception as exc:
+            try:
+                ws.close()
+            except Exception:
+                pass
+            raise RuntimeError(f"Tencent ASR returned non-json handshake: {first}") from exc
+        if payload.get("code") != 0:
+            try:
+                ws.close()
+            except Exception:
+                pass
+            raise RuntimeError(f"Tencent ASR {payload.get('code')}: {payload.get('message') or payload}")
         ws.settimeout(None)
-        with self.send_lock:
-            ws.send(build_full_client_request(self.end_window_size, None), opcode=WS_OPCODE_BINARY)
         with self.lock:
             self.ws = ws
             self.running = True
+            self.provider = "tencent_speaker"
+            self.engine_model_type = engine
+            self.voice_id = str(payload.get("voice_id") or "")
             if reset_state:
                 self.partial = ""
                 self.seen_finals.clear()
                 self.turn_buffer.clear()
             self.turn_version += 1
-        self.add_event("status", message="Doubao ASR connected, ready to speak.")
+        self.add_event("status", message=f"Tencent realtime speaker ASR connected: {engine}.")
         self.receiver = threading.Thread(target=self.receive_loop, daemon=True)
         self.receiver.start()
 
@@ -3159,7 +3459,7 @@ class DoubaoSession:
             return
         try:
             with self.send_lock:
-                ws.send(build_audio_request(audio), opcode=WS_OPCODE_BINARY)
+                ws.send(audio, opcode=WS_OPCODE_BINARY)
         except Exception as exc:
             with self.lock:
                 if self.ws is ws:
@@ -3179,7 +3479,7 @@ class DoubaoSession:
         if ws:
             try:
                 with self.send_lock:
-                    ws.send(build_audio_request(b"", is_last=True), opcode=WS_OPCODE_BINARY)
+                    ws.send(json.dumps({"type": "end"}), opcode=0x1)
             except Exception:
                 pass
             try:
@@ -3190,7 +3490,6 @@ class DoubaoSession:
             self.close_audio_recording()
 
     def receive_loop(self):
-        import websocket as ws_module
         while True:
             with self.lock:
                 ws = self.ws
@@ -3199,27 +3498,47 @@ class DoubaoSession:
                 return
             try:
                 raw = ws.recv()
-                if isinstance(raw, str):
-                    continue
-                message = parse_server_message(raw)
-                if message.message_type == MSG_ERROR_RESPONSE:
-                    if message.error_code != 45000081 or "Timeout waiting next packet" not in str(message.payload):
-                        self.add_event("error", message=f"API error {message.error_code}: {message.payload}")
+                if isinstance(raw, bytes):
+                    raw = raw.decode("utf-8", errors="replace")
+                message = json.loads(raw)
+                code = message.get("code")
+                if code not in (None, 0):
+                    msg = str(message.get("message") or message)
+                    if code not in (4008,):
+                        self.add_event("error", message=f"Tencent ASR {code}: {msg}")
                     with self.lock:
                         self.running = False
                     return
-                for utterance in iter_utterances(message.payload):
-                    text = (utterance.get("text") or "").strip()
+
+                if message.get("final") == 1 or message.get("type") in ("end", "final"):
+                    self.add_event("status", message="Tencent ASR stream finished.")
+                    with self.lock:
+                        self.running = False
+                    return
+
+                speaker_context_id = message.get("speaker_context_id")
+                if isinstance(speaker_context_id, str) and speaker_context_id.strip():
+                    self.add_event("speaker_context", speakerContextId=speaker_context_id.strip())
+
+                for sentence in iter_tencent_sentences(message):
+                    text = tencent_sentence_text(sentence)
                     if not text:
                         continue
-                    if utterance.get("definite") is True:
-                        key = (utterance.get("start_time"), utterance.get("end_time"), text)
+                    meta = self.tencent_event_meta(sentence, text)
+                    if tencent_sentence_type(sentence) == 1:
+                        key = (
+                            meta.get("sourceId"),
+                            meta.get("rawSpeaker"),
+                            sentence.get("start_time"),
+                            sentence.get("end_time"),
+                            text,
+                        )
                         if key not in self.seen_finals:
                             self.seen_finals.add(key)
-                            self.handle_asr_final(text)
+                            self.handle_asr_final(text, meta)
                     elif text != self.partial:
                         self.partial = text
-                        self.add_event("partial", text=text)
+                        self.add_event("partial", text=text, **meta)
             except Exception as exc:
                 with self.lock:
                     self.running = False
@@ -3231,8 +3550,9 @@ class DoubaoSession:
                     self.add_event("error", message=f"{type(exc).__name__}: {exc}")
                 return
 
-    def handle_asr_final(self, text: str):
-        self.add_event("utterance", text=text)
+    def handle_asr_final(self, text: str, meta: dict | None = None):
+        meta = meta or {}
+        self.add_event("utterance", text=text, **meta)
 
         if self.fast_mode:
             with self.lock:
@@ -3240,7 +3560,7 @@ class DoubaoSession:
                 transcript = "".join(self.turn_buffer).strip()
                 self.turn_buffer.clear()
                 self.turn_version += 1
-            self.emit_sentence_done(transcript)
+            self.emit_sentence_done(transcript, meta)
             return
 
         with self.lock:
@@ -3253,23 +3573,23 @@ class DoubaoSession:
             with self.lock:
                 self.turn_buffer.clear()
                 self.turn_version += 1
-            self.emit_sentence_done(transcript)
+            self.emit_sentence_done(transcript, meta)
             return
 
         self.add_event("status", message="Checking semantic completeness...")
         threading.Thread(
             target=self.semantic_decision_worker,
-            args=(version, transcript),
+            args=(version, transcript, meta),
             daemon=True,
         ).start()
 
-    def semantic_decision_worker(self, version: int, transcript: str):
+    def semantic_decision_worker(self, version: int, transcript: str, meta: dict | None = None):
         time.sleep(0.1)
         try:
             decision = semantic_turn_decision(transcript, False)
         except Exception as exc:
             self.add_event("error", message=f"Semantic decision failed: {exc}")
-            self.emit_sentence_done(transcript)
+            self.emit_sentence_done(transcript, meta)
             return
 
         with self.lock:
@@ -3280,13 +3600,14 @@ class DoubaoSession:
                 self.turn_version += 1
 
         if decision["complete"]:
-            self.emit_sentence_done(transcript)
+            self.emit_sentence_done(transcript, meta)
         else:
             self.add_event("merge_continue", reason=decision.get("reason", "Semantic incomplete"))
 
-    def emit_sentence_done(self, transcript: str):
-        self.record_realtime_sentence(transcript)
-        self.add_event("sentence_done", text=transcript)
+    def emit_sentence_done(self, transcript: str, meta: dict | None = None):
+        meta = meta or {}
+        self.record_realtime_sentence(transcript, meta)
+        self.add_event("sentence_done", text=transcript, **meta)
 
     def events_after(self, after: int):
         with self.event_lock:
@@ -3312,10 +3633,14 @@ def make_http_handler(session: DoubaoSession):
                 self.send_json(
                     HTTPStatus.OK,
                     {
-                        "provider": "doubao",
-                        "app_key_loaded": bool(os.getenv("DOUBAO_APP_ID")),
-                        "access_key_loaded": bool(os.getenv("DOUBAO_ACCESS_TOKEN")),
-                        "resource_id": os.getenv("DOUBAO_RESOURCE_ID"),
+                        "provider": "tencent_speaker",
+                        "app_id_loaded": bool(os.getenv("TENCENT_APP_ID")),
+                        "secret_id_loaded": bool(os.getenv("TENCENT_SECRET_ID")),
+                        "secret_key_loaded": bool(os.getenv("TENCENT_SECRET_KEY")),
+                        "engine_model_type": os.getenv("TENCENT_ASR_ENGINE", "16k_zh_en_speaker"),
+                        "need_vad": os.getenv("TENCENT_NEED_VAD", "1"),
+                        "vad_silence_time": os.getenv("TENCENT_VAD_SILENCE_TIME", ""),
+                        "speaker_diarization": os.getenv("TENCENT_SPEAKER_DIARIZATION", "1"),
                     },
                 )
             elif path.path == "/api/wecom/recipients":
@@ -3373,6 +3698,15 @@ def make_http_handler(session: DoubaoSession):
                 try:
                     payload = json.loads(self.rfile.read(length).decode("utf-8") or "{}")
                     text = str(payload.get("text") or "")
+                    interviewer_questions = payload.get("interviewerQuestions") or []
+                    if isinstance(interviewer_questions, list):
+                        question_context = "\n".join(
+                            f"{index + 1}. {str(question).strip()}"
+                            for index, question in enumerate(interviewer_questions[-8:])
+                            if str(question).strip()
+                        )
+                        if question_context:
+                            text = f"面试官问题上下文：\n{question_context}\n\n{text}"
                 except Exception as exc:
                     self.send_text(HTTPStatus.INTERNAL_SERVER_ERROR, str(exc))
                     return
