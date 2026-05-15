@@ -1,0 +1,22 @@
+services:
+  hireflow-live:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: hireflow-live:latest
+    container_name: hireflow-live
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      REPORT_OUTPUT_DIR: /app/reports
+    ports:
+      - "127.0.0.1:8770:8770"
+      - "127.0.0.1:8771:8771"
+    volumes:
+      - ./reports:/app/reports
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
