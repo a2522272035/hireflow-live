@@ -1,4 +1,5 @@
 import { ref } from 'vue'
+import { appPath, appWsUrl } from '../utils/appPaths'
 
 const QUESTION_MERGE_WINDOW_MS = 18 * 1000
 
@@ -42,11 +43,7 @@ export function useAsrEvents() {
       eventSocket.close()
       eventSocket = null
     }
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const isLocalHost = ['127.0.0.1', 'localhost'].includes(window.location.hostname)
-    const wsUrl = isLocalHost
-      ? `${protocol}//${window.location.hostname}:8771`
-      : `${protocol}//${window.location.host}/ws`
+    const wsUrl = appWsUrl('/ws')
     return new Promise((resolve, reject) => {
       const socket = new WebSocket(wsUrl)
       eventSocket = socket
@@ -404,7 +401,7 @@ export function useAsrEvents() {
     let rawContent = ''
     
     try {
-      const response = await fetch('/api/analyze', {
+      const response = await fetch(appPath('/api/analyze'), {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
@@ -643,7 +640,7 @@ export function useAsrEvents() {
       time: formatTime()
     })
     try {
-      const response = await fetch('/api/question', {
+      const response = await fetch(appPath('/api/question'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ question: text })
@@ -672,7 +669,7 @@ export function useAsrEvents() {
 
   async function switchMode(mode) {
     try {
-      const response = await fetch('/api/mode', {
+      const response = await fetch(appPath('/api/mode'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ mode })

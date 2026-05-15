@@ -48,6 +48,7 @@
 
 <script setup>
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { appPath } from '../utils/appPaths'
 
 const props = defineProps({
   resume: {
@@ -115,7 +116,7 @@ async function handleFileSelect(event) {
 
     let response
     try {
-      response = await fetch('/api/upload-resume', {
+      response = await fetch(appPath('/api/upload-resume'), {
         method: 'POST',
         body: formData,
         signal: controller.signal

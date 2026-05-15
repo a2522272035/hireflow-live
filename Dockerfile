@@ -7,6 +7,7 @@ RUN npm ci --registry=https://registry.npmmirror.com
 
 COPY index.html vite.config.js ./
 COPY src ./src
+ENV VITE_BASE_PATH=/hireflow-live/
 RUN npm run build
 
 FROM python:3.11-slim

@@ -133,6 +133,7 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useAudioRecorder } from './composables/useAudioRecorder.js'
+import { appPath, appWsUrl } from './utils/appPaths'
 
 const speakerColors = ['#2563eb', '#16a34a', '#f59e0b', '#dc2626', '#7c3aed', '#0891b2', '#be185d', '#475569']
 
@@ -165,11 +166,7 @@ onBeforeUnmount(() => {
 })
 
 function wsUrl() {
-  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-  const isLocalHost = ['127.0.0.1', 'localhost'].includes(window.location.hostname)
-  return isLocalHost
-    ? `${protocol}//${window.location.hostname}:8771`
-    : `${protocol}//${window.location.host}/ws`
+  return appWsUrl('/ws')
 }
 
 function formatTime() {
@@ -283,7 +280,7 @@ async function startRecording() {
   try {
     await connectEvents()
     await startMic((pcm) => sendAudio(pcm))
-    const response = await fetch('/start', { method: 'POST' })
+    const response = await fetch(appPath('/start'), { method: 'POST' })
     if (!response.ok) throw new Error(await response.text())
     upstreamStarted = true
     recording.value = true
@@ -304,7 +301,7 @@ async function stopRecording() {
   partialLabel.value = ''
   await stopMic().catch(() => {})
   if (wasActive) {
-    await fetch('/stop', { method: 'POST' }).catch(() => {})
+    await fetch(appPath('/stop'), { method: 'POST' }).catch(() => {})
   }
   if (socket) {
     const current = socket

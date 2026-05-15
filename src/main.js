@@ -2,8 +2,9 @@ import { createApp } from 'vue'
 import App from './App.vue'
 import SpeakerTestPage from './SpeakerTestPage.vue'
 import './styles.css'
+import { isAppPath } from './utils/appPaths'
 
-const RootComponent = window.location.pathname === '/speaker-test'
+const RootComponent = isAppPath('/speaker-test')
   ? SpeakerTestPage
   : App
 

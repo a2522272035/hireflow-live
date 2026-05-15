@@ -421,6 +421,7 @@
 
 <script setup>
 import { computed, defineComponent, h, ref, watch } from 'vue'
+import { appPath } from '../utils/appPaths'
 
 const props = defineProps({
   open: {
@@ -958,7 +959,7 @@ async function askAiForTerm() {
   termCard.value.loading = true
   termCard.value.aiAnswer = ''
   try {
-    const response = await fetch('/api/explain-term', {
+    const response = await fetch(appPath('/api/explain-term'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({

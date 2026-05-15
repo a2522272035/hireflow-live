@@ -2704,6 +2704,22 @@ def dist_file_for(path: str) -> Path | None:
     return None
 
 
+def app_base_path() -> str:
+    value = (os.getenv("APP_BASE_PATH") or "").strip()
+    if not value or value == "/":
+        return ""
+    value = "/" + value.strip("/")
+    return value
+
+
+def normalize_request_path(path: str) -> str:
+    base = app_base_path()
+    if base and (path == base or path.startswith(f"{base}/")):
+        stripped = path[len(base):] or "/"
+        return stripped if stripped.startswith("/") else f"/{stripped}"
+    return path
+
+
 TENCENT_ASR_HOST = "asr.cloud.tencent.com"
 TENCENT_ASR_PATH_TEMPLATE = "/asr/v2/{appid}"
 
@@ -3621,19 +3637,21 @@ def make_http_handler(session: DoubaoSession):
 
         def do_GET(self):
             path = urlparse(self.path)
-            if path.path == "/events":
+            request_path = normalize_request_path(path.path)
+            if request_path == "/events":
                 params = parse_qs(path.query)
                 after = int((params.get("after") or ["0"])[0] or "0")
                 self.send_json(HTTPStatus.OK, {"events": session.events_after(after)})
-            elif path.path == "/":
-                if self.serve_dist(path.path):
+            elif request_path == "/":
+                if self.serve_dist(request_path):
                     return
                 self.send_text(HTTPStatus.OK, PAGE, "text/html; charset=utf-8")
-            elif path.path == "/debug-env":
+            elif request_path == "/debug-env":
                 self.send_json(
                     HTTPStatus.OK,
                     {
                         "provider": "tencent_speaker",
+                        "app_base_path": app_base_path(),
                         "app_id_loaded": bool(os.getenv("TENCENT_APP_ID")),
                         "secret_id_loaded": bool(os.getenv("TENCENT_SECRET_ID")),
                         "secret_key_loaded": bool(os.getenv("TENCENT_SECRET_KEY")),
@@ -3643,15 +3661,16 @@ def make_http_handler(session: DoubaoSession):
                         "speaker_diarization": os.getenv("TENCENT_SPEAKER_DIARIZATION", "1"),
                     },
                 )
-            elif path.path == "/api/wecom/recipients":
+            elif request_path == "/api/wecom/recipients":
                 self.send_json(HTTPStatus.OK, {"status": "success", **wecom_config_summary()})
             else:
-                if self.serve_dist(path.path):
+                if self.serve_dist(request_path):
                     return
                 self.send_text(HTTPStatus.NOT_FOUND, "not found")
 
         def do_DELETE(self):
-            if self.path == "/api/resume":
+            request_path = normalize_request_path(urlparse(self.path).path)
+            if request_path == "/api/resume":
                 _parsed_resume.clear()
                 session.clear_resume_file_state()
                 self.send_json(HTTPStatus.OK, {"status": "success", "resume": None})
@@ -3659,7 +3678,8 @@ def make_http_handler(session: DoubaoSession):
                 self.send_text(HTTPStatus.NOT_FOUND, "not found")
 
         def do_POST(self):
-            if self.path == "/start":
+            request_path = normalize_request_path(urlparse(self.path).path)
+            if request_path == "/start":
                 try:
                     session.start()
                 except Exception as exc:
@@ -3668,10 +3688,10 @@ def make_http_handler(session: DoubaoSession):
                     self.send_text(HTTPStatus.INTERNAL_SERVER_ERROR, str(exc))
                     return
                 self.send_json(HTTPStatus.OK, {"ok": True})
-            elif self.path == "/stop":
+            elif request_path == "/stop":
                 session.stop()
                 self.send_json(HTTPStatus.OK, {"ok": True})
-            elif self.path == "/api/classify-speaker-role":
+            elif request_path == "/api/classify-speaker-role":
                 length = int(self.headers.get("Content-Length", "0") or "0")
                 try:
                     payload = json.loads(self.rfile.read(length).decode("utf-8") or "{}")
@@ -3693,7 +3713,7 @@ def make_http_handler(session: DoubaoSession):
                             "source": "error",
                         },
                     )
-            elif self.path == "/api/analyze":
+            elif request_path == "/api/analyze":
                 length = int(self.headers.get("Content-Length", "0") or "0")
                 try:
                     payload = json.loads(self.rfile.read(length).decode("utf-8") or "{}")
@@ -3769,9 +3789,9 @@ def make_http_handler(session: DoubaoSession):
                 if not analysis_done.wait(timeout=timeout_seconds):
                     print(f"[AI] analyze timeout after {timeout_seconds}s, returning fallback.", flush=True)
                     done_callback(fallback_analysis(text))
-            elif self.path == "/api/upload-resume":
+            elif request_path == "/api/upload-resume":
                 self._upload_resume()
-            elif self.path == "/api/explain-term":
+            elif request_path == "/api/explain-term":
                 length = int(self.headers.get("Content-Length", "0") or "0")
                 try:
                     payload = json.loads(self.rfile.read(length).decode("utf-8") or "{}")
@@ -3779,7 +3799,7 @@ def make_http_handler(session: DoubaoSession):
                     self.send_json(HTTPStatus.OK, {"status": "success", "explanation": explanation})
                 except Exception as exc:
                     self.send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": str(exc)})
-            elif self.path == "/api/final-report":
+            elif request_path == "/api/final-report":
                 length = int(self.headers.get("Content-Length", "0") or "0")
                 try:
                     payload = json.loads(self.rfile.read(length).decode("utf-8") or "{}")
@@ -3804,7 +3824,7 @@ def make_http_handler(session: DoubaoSession):
                     import traceback
                     traceback.print_exc()
                     self.send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": str(exc)})
-            elif self.path == "/api/wecom/send-report":
+            elif request_path == "/api/wecom/send-report":
                 length = int(self.headers.get("Content-Length", "0") or "0")
                 try:
                     payload = json.loads(self.rfile.read(length).decode("utf-8") or "{}")
@@ -3823,7 +3843,7 @@ def make_http_handler(session: DoubaoSession):
                     self.send_json(status, {"status": "success" if result.get("status") == "sent" else "failed", "wecom_push": result})
                 except Exception as exc:
                     self.send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": str(exc)})
-            elif self.path == "/api/mode":
+            elif request_path == "/api/mode":
                 length = int(self.headers.get("Content-Length", "0") or "0")
                 try:
                     payload = json.loads(self.rfile.read(length).decode("utf-8") or "{}")

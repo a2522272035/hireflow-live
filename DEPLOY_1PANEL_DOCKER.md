@@ -72,7 +72,7 @@ docker logs -f hireflow-live
 健康检查：
 
 ```bash
-curl http://127.0.0.1:8770/debug-env
+curl http://127.0.0.1:18770/debug-env
 ```
 
 应该看到：
@@ -93,7 +93,8 @@ curl http://127.0.0.1:8770/debug-env
 ```text
 网站类型：反向代理
 主域名：你的域名，例如 interview.example.com
-代理地址：http://127.0.0.1:8770
+前端请求路径：/hireflow-live
+代理地址：http://127.0.0.1:18770
 ```
 
 开启 HTTPS。浏览器麦克风在公网环境下通常要求 HTTPS。
@@ -103,14 +104,14 @@ curl http://127.0.0.1:8770/debug-env
 线上页面会连接：
 
 ```text
-wss://你的域名/ws
+wss://你的域名/hireflow-live/ws
 ```
 
 在 1Panel 网站的 Nginx 配置里增加：
 
 ```nginx
-location /ws {
-    proxy_pass http://127.0.0.1:8771;
+location ^~ /hireflow-live/ws {
+    proxy_pass http://127.0.0.1:18771;
     proxy_http_version 1.1;
     proxy_set_header Upgrade $http_upgrade;
     proxy_set_header Connection "upgrade";
@@ -132,8 +133,8 @@ location /ws {
 不要开放：
 
 ```text
-8770
-8771
+18770
+18771
 ```
 
 这两个端口已经通过 `127.0.0.1` 绑定，只给本机 1Panel/Nginx 访问。

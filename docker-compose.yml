@@ -9,10 +9,11 @@ services:
     env_file:
       - .env
     environment:
+      APP_BASE_PATH: /hireflow-live
       REPORT_OUTPUT_DIR: /app/reports
     ports:
-      - "127.0.0.1:8770:8770"
-      - "127.0.0.1:8771:8771"
+      - "127.0.0.1:18770:8770"
+      - "127.0.0.1:18771:8771"
     volumes:
       - ./reports:/app/reports
     logging:

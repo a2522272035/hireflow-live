@@ -197,6 +197,7 @@ import ResumeViewerModal from './components/ResumeViewerModal.vue'
 import { useAudioRecorder } from './composables/useAudioRecorder.js'
 import { useAsrEvents } from './composables/useAsrEvents.js'
 import mockInterviewScenario from './mockInterview.js'
+import { appPath } from './utils/appPaths'
 
 const recordingStatus = ref('idle')
 const startedAt = ref(Date.now())
@@ -325,7 +326,7 @@ function handleResumeLoaded(resume) {
 async function handleResumeCleared() {
   loadedResume.value = null
   resumeViewerOpen.value = false
-  await fetch('/api/resume', { method: 'DELETE' }).catch(() => {})
+  await fetch(appPath('/api/resume'), { method: 'DELETE' }).catch(() => {})
 }
 
 async function setMode(mode) {
@@ -334,9 +335,9 @@ async function setMode(mode) {
 }
 
 function openSpeakerTest() {
-  const popup = window.open('/speaker-test', '_blank', 'noopener,noreferrer,width=1280,height=820')
+  const popup = window.open(appPath('/speaker-test'), '_blank', 'noopener,noreferrer,width=1280,height=820')
   if (!popup) {
-    window.location.href = '/speaker-test'
+    window.location.href = appPath('/speaker-test')
   }
 }
 
@@ -384,7 +385,7 @@ async function startRecording() {
     await startMic((pcm) => {
       if (asrStarted) sendAudio(pcm)
     })
-    const response = await fetch('/start', { method: 'POST' })
+    const response = await fetch(appPath('/start'), { method: 'POST' })
     if (!response.ok) throw new Error(await response.text())
     asrStarted = true
     recordingStatus.value = 'recording'
@@ -409,7 +410,7 @@ async function stopRecording({ finalize = true } = {}) {
   }
   await stopMic()
   if (recordingStatus.value === 'recording') {
-    await fetch('/stop', { method: 'POST' }).catch(() => {})
+    await fetch(appPath('/stop'), { method: 'POST' }).catch(() => {})
     await wait(900)
     recordingStatus.value = 'stopped'
     asrStatus.value = '已停止'
@@ -497,7 +498,7 @@ function persistCompletedSession(snapshot, report) {
 }
 
 async function saveFinalReport(snapshot) {
-  const response = await fetch('/api/final-report', {
+  const response = await fetch(appPath('/api/final-report'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(snapshot)
@@ -526,7 +527,7 @@ function formatWecomPush(push) {
 
 async function loadWecomRecipients() {
   try {
-    const response = await fetch('/api/wecom/recipients')
+    const response = await fetch(appPath('/api/wecom/recipients'))
     if (!response.ok) return
     const data = await response.json()
     wecomRecipients.value = Array.isArray(data.recipients) ? data.recipients : []
@@ -551,7 +552,7 @@ async function sendCompletedReportToWecom() {
   wecomSendStatus.value = '正在发送企业微信文件...'
   wecomSendStatusType.value = 'info'
   try {
-    const response = await fetch('/api/wecom/send-report', {
+    const response = await fetch(appPath('/api/wecom/send-report'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
