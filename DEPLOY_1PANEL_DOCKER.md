@@ -39,6 +39,11 @@ TENCENT_SPEAKER_DIARIZATION=1
 TENCENT_ENABLE_SPEAKER_CONTEXT=1
 TENCENT_FIRST_SPEAKER_ROLE=interviewer
 DEEPSEEK_API_KEY=你的DeepSeekKey
+
+# 一阶段数据持久化，连接同机 PostgreSQL/pgvector 容器。
+ENABLE_DATABASE=1
+ENABLE_PGVECTOR=1
+DATABASE_URL=postgresql://hireflow:hireflow_dev_123@host.docker.internal:5432/hireflow
 ```
 
 容器里报告目录由 `docker-compose.yml` 统一覆盖为：
@@ -73,6 +78,7 @@ docker logs -f hireflow-live
 
 ```bash
 curl http://127.0.0.1:18770/debug-env
+curl http://127.0.0.1:18770/api/db/status
 ```
 
 应该看到：
@@ -83,6 +89,17 @@ curl http://127.0.0.1:18770/debug-env
   "app_id_loaded": true,
   "secret_id_loaded": true,
   "secret_key_loaded": true
+}
+```
+
+数据库正常时，`/api/db/status` 应看到：
+
+```json
+{
+  "enabled": true,
+  "database_url_loaded": true,
+  "pgvector_enabled": true,
+  "schema_ready": true
 }
 ```
 

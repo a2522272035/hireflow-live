@@ -135,6 +135,13 @@
           </div>
         </div>
 
+        <EvaluationPanel
+          v-model="evaluationDraft"
+          :saving="savingEvaluation"
+          :status="evaluationStatus"
+          @save="saveInterviewEvaluation"
+        />
+
         <div class="report-file-row">
           <span>PDF</span>
           <p>{{ completedReport.report.pdf_path }}</p>
@@ -194,6 +201,7 @@ import AIChatPanel from './components/AIChatPanel.vue'
 import TranscriptPanel from './components/TranscriptPanel.vue'
 import ResumeUpload from './components/ResumeUpload.vue'
 import ResumeViewerModal from './components/ResumeViewerModal.vue'
+import EvaluationPanel from './components/EvaluationPanel.vue'
 import { useAudioRecorder } from './composables/useAudioRecorder.js'
 import { useAsrEvents } from './composables/useAsrEvents.js'
 import mockInterviewScenario from './mockInterview.js'
@@ -211,12 +219,22 @@ const hasStartedInterview = ref(false)
 const testModeRunning = ref(false)
 const currentSessionDemo = ref(false)
 const completedReport = ref(null)
+const evaluationDimensions = [
+  { key: 'communication', label: '沟通表达' },
+  { key: 'business', label: '业务理解' },
+  { key: 'logic', label: '逻辑分析' },
+  { key: 'experience', label: '经验匹配' },
+  { key: 'data', label: '数据意识' }
+]
 const wecomRecipients = ref([])
 const selectedWecomUser = ref('')
 const customWecomUser = ref('')
 const sendingWecom = ref(false)
 const wecomSendStatus = ref('')
 const wecomSendStatusType = ref('info')
+const evaluationDraft = ref(createEmptyEvaluationDraft())
+const savingEvaluation = ref(false)
+const evaluationStatus = ref('')
 const reportProgress = ref({
   visible: false,
   step: 'transcript',
@@ -447,6 +465,8 @@ async function finishInterview() {
     setReportProgress('done', 100, '报告已生成', '面试资料已归档完成。')
     persistCompletedSession(snapshot, report)
     completedReport.value = { snapshot, report }
+    evaluationDraft.value = createEmptyEvaluationDraft(report)
+    evaluationStatus.value = report.database?.status === 'saved' ? '数据库已归档' : ''
     prepareWecomDefaultRecipient()
     wecomSendStatus.value = formatWecomPush(report.wecom_push)
     wecomSendStatusType.value = 'info'
@@ -505,6 +525,76 @@ async function saveFinalReport(snapshot) {
   })
   if (!response.ok) throw new Error(await response.text())
   return response.json()
+}
+
+function createEmptyEvaluationDraft(report = null) {
+  const assessment = report?.assessment || {}
+  const dimensionMap = new Map(
+    (assessment.dimensions || []).map((item) => [item.name, item])
+  )
+  const suggestedByKey = {
+    communication: dimensionMap.get('表达清晰度'),
+    business: dimensionMap.get('岗位匹配度'),
+    logic: dimensionMap.get('逻辑结构'),
+    experience: dimensionMap.get('经验真实性'),
+    data: dimensionMap.get('数据意识')
+  }
+  return {
+    recommendation: recommendationFromAssessment(assessment),
+    comment: assessment.summary || '',
+    scores: evaluationDimensions.map((dimension) => {
+      const suggestion = suggestedByKey[dimension.key]
+      const aiSuggestedScore = suggestion ? scoreToStars(suggestion.score) : 3
+      return {
+        ...dimension,
+        score: aiSuggestedScore,
+        aiSuggestedScore,
+        note: suggestion?.comment || ''
+      }
+    })
+  }
+}
+
+function scoreToStars(score) {
+  const numeric = Number(score)
+  if (!Number.isFinite(numeric)) return 3
+  return Math.max(1, Math.min(5, Math.round(numeric / 20)))
+}
+
+function recommendationFromAssessment(assessment) {
+  const text = `${assessment.hiring_grade || ''} ${assessment.recommendation || ''}`
+  if (/暂不|淘汰|不推荐/.test(text)) return '暂不推荐'
+  if (/谨慎/.test(text)) return '谨慎考虑'
+  if (/待|复核/.test(text)) return '待复核'
+  return '推荐进入下一轮'
+}
+
+async function saveInterviewEvaluation() {
+  if (!completedReport.value || savingEvaluation.value) return
+  savingEvaluation.value = true
+  evaluationStatus.value = ''
+  try {
+    const response = await fetch(appPath('/api/evaluation'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        sessionId: completedReport.value.snapshot.sessionId,
+        snapshot: completedReport.value.snapshot,
+        assessment: completedReport.value.report.assessment || {},
+        report: completedReport.value.report,
+        evaluation: evaluationDraft.value
+      })
+    })
+    const data = await response.json().catch(() => ({}))
+    if (!response.ok) {
+      throw new Error(data.error || data.database?.error || '评价保存失败')
+    }
+    evaluationStatus.value = data.database?.status === 'saved' ? '已保存' : '未启用数据库'
+  } catch (error) {
+    evaluationStatus.value = `保存失败：${error.message}`
+  } finally {
+    savingEvaluation.value = false
+  }
 }
 
 function formatWecomPush(push) {

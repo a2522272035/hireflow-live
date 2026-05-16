@@ -297,6 +297,911 @@ def fallback_analysis(text: str) -> dict:
 # Global variable to store parsed resume info
 _parsed_resume = {}
 
+_db_schema_ready = False
+_db_schema_lock = threading.Lock()
+
+
+def env_flag(name: str, default: str = "0") -> bool:
+    return str(os.getenv(name, default) or "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def database_enabled() -> bool:
+    return env_flag("ENABLE_DATABASE") and bool(os.getenv("DATABASE_URL"))
+
+
+def pgvector_enabled() -> bool:
+    return env_flag("ENABLE_PGVECTOR")
+
+
+def db_json(value: Any):
+    from psycopg.types.json import Jsonb
+
+    return Jsonb(value if value is not None else {})
+
+
+def db_connect():
+    import psycopg
+
+    return psycopg.connect(os.getenv("DATABASE_URL"), connect_timeout=5)
+
+
+def db_table_has_column(conn, table_name: str, column_name: str) -> bool:
+    row = conn.execute(
+        """
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = %s
+          AND column_name = %s
+        LIMIT 1
+        """,
+        (table_name, column_name),
+    ).fetchone()
+    return bool(row)
+
+
+def ensure_database_schema() -> bool:
+    global _db_schema_ready
+    if not database_enabled():
+        return False
+    if _db_schema_ready:
+        return True
+
+    with _db_schema_lock:
+        if _db_schema_ready:
+            return True
+        try:
+            with db_connect() as conn:
+                if pgvector_enabled():
+                    conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
+                embedding_column = "vector" if pgvector_enabled() else "jsonb"
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS candidates (
+                        id text PRIMARY KEY,
+                        name text,
+                        phone text,
+                        email text,
+                        target_position text,
+                        identity_key text,
+                        created_at timestamptz DEFAULT now(),
+                        updated_at timestamptz DEFAULT now()
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS resumes (
+                        id text PRIMARY KEY,
+                        candidate_id text REFERENCES candidates(id) ON DELETE CASCADE,
+                        file_name text,
+                        file_path text,
+                        parsed_json jsonb DEFAULT '{}'::jsonb,
+                        parsed_text text,
+                        created_at timestamptz DEFAULT now(),
+                        updated_at timestamptz DEFAULT now()
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS interview_sessions (
+                        id text PRIMARY KEY,
+                        candidate_id text REFERENCES candidates(id) ON DELETE SET NULL,
+                        round_name text,
+                        position_name text,
+                        interviewer_name text,
+                        status text,
+                        started_at timestamptz,
+                        ended_at timestamptz,
+                        elapsed_time text,
+                        demo_mode boolean DEFAULT false,
+                        audio_path text,
+                        transcript_path text,
+                        realtime_transcript_path text,
+                        folder_path text,
+                        snapshot_json jsonb DEFAULT '{}'::jsonb,
+                        created_at timestamptz DEFAULT now(),
+                        updated_at timestamptz DEFAULT now()
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS interview_turns (
+                        id text PRIMARY KEY,
+                        session_id text REFERENCES interview_sessions(id) ON DELETE CASCADE,
+                        candidate_id text REFERENCES candidates(id) ON DELETE SET NULL,
+                        speaker_id text,
+                        speaker_role text,
+                        speaker_label text,
+                        text text,
+                        is_final boolean DEFAULT true,
+                        turn_time text,
+                        source_id text,
+                        raw_speaker text,
+                        role_confidence numeric,
+                        raw_json jsonb DEFAULT '{}'::jsonb,
+                        created_at timestamptz DEFAULT now()
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS interview_segments (
+                        id text PRIMARY KEY,
+                        session_id text REFERENCES interview_sessions(id) ON DELETE CASCADE,
+                        candidate_id text REFERENCES candidates(id) ON DELETE SET NULL,
+                        question_text text,
+                        answer_text text,
+                        question_started_at text,
+                        question_ended_at text,
+                        answer_started_at text,
+                        answer_ended_at text,
+                        source_turn_ids text[] DEFAULT '{}',
+                        confidence numeric,
+                        needs_review boolean DEFAULT false,
+                        raw_json jsonb DEFAULT '{}'::jsonb,
+                        created_at timestamptz DEFAULT now()
+                    )
+                    """
+                )
+                conn.execute(
+                    f"""
+                    CREATE TABLE IF NOT EXISTS question_index (
+                        id text PRIMARY KEY,
+                        candidate_id text REFERENCES candidates(id) ON DELETE CASCADE,
+                        session_id text REFERENCES interview_sessions(id) ON DELETE CASCADE,
+                        segment_id text REFERENCES interview_segments(id) ON DELETE CASCADE,
+                        question_text text NOT NULL,
+                        topic_tags jsonb DEFAULT '[]'::jsonb,
+                        embedding {embedding_column},
+                        embedding_model text,
+                        created_at timestamptz DEFAULT now()
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS interviewer_evaluations (
+                        id text PRIMARY KEY,
+                        session_id text REFERENCES interview_sessions(id) ON DELETE CASCADE,
+                        candidate_id text REFERENCES candidates(id) ON DELETE SET NULL,
+                        interviewer_name text,
+                        overall_recommendation text,
+                        overall_comment text,
+                        average_score numeric,
+                        created_at timestamptz DEFAULT now(),
+                        updated_at timestamptz DEFAULT now()
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS evaluation_scores (
+                        id text PRIMARY KEY,
+                        evaluation_id text REFERENCES interviewer_evaluations(id) ON DELETE CASCADE,
+                        dimension_key text,
+                        dimension_name text,
+                        score numeric,
+                        ai_suggested_score numeric,
+                        interviewer_note text,
+                        evidence_turn_ids jsonb DEFAULT '[]'::jsonb,
+                        created_at timestamptz DEFAULT now()
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS ai_session_summaries (
+                        id text PRIMARY KEY,
+                        session_id text REFERENCES interview_sessions(id) ON DELETE CASCADE,
+                        candidate_id text REFERENCES candidates(id) ON DELETE SET NULL,
+                        summary_json jsonb DEFAULT '{}'::jsonb,
+                        strengths_json jsonb DEFAULT '[]'::jsonb,
+                        risks_json jsonb DEFAULT '[]'::jsonb,
+                        doubt_points_json jsonb DEFAULT '[]'::jsonb,
+                        next_questions_json jsonb DEFAULT '[]'::jsonb,
+                        created_at timestamptz DEFAULT now()
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS candidate_memory_items (
+                        id text PRIMARY KEY,
+                        candidate_id text REFERENCES candidates(id) ON DELETE CASCADE,
+                        session_id text REFERENCES interview_sessions(id) ON DELETE CASCADE,
+                        memory_type text,
+                        content text,
+                        source_segment_id text,
+                        confidence numeric,
+                        created_at timestamptz DEFAULT now()
+                    )
+                    """
+                )
+                conn.execute(
+                    f"""
+                    CREATE TABLE IF NOT EXISTS memory_embeddings (
+                        id text PRIMARY KEY,
+                        memory_item_id text REFERENCES candidate_memory_items(id) ON DELETE CASCADE,
+                        candidate_id text REFERENCES candidates(id) ON DELETE CASCADE,
+                        embedding {embedding_column},
+                        embedding_model text,
+                        created_at timestamptz DEFAULT now()
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS interview_context_snapshots (
+                        id text PRIMARY KEY,
+                        candidate_id text REFERENCES candidates(id) ON DELETE CASCADE,
+                        target_session_id text REFERENCES interview_sessions(id) ON DELETE CASCADE,
+                        source_session_ids jsonb DEFAULT '[]'::jsonb,
+                        context_type text,
+                        context_json jsonb DEFAULT '{}'::jsonb,
+                        prompt_text text,
+                        model_name text,
+                        status text,
+                        created_at timestamptz DEFAULT now(),
+                        updated_at timestamptz DEFAULT now()
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS reports (
+                        id text PRIMARY KEY,
+                        candidate_id text REFERENCES candidates(id) ON DELETE SET NULL,
+                        session_id text REFERENCES interview_sessions(id) ON DELETE CASCADE,
+                        report_type text,
+                        file_path text,
+                        report_json jsonb DEFAULT '{}'::jsonb,
+                        created_at timestamptz DEFAULT now()
+                    )
+                    """
+                )
+                for statement in (
+                    "CREATE INDEX IF NOT EXISTS idx_sessions_candidate ON interview_sessions(candidate_id)",
+                    "CREATE INDEX IF NOT EXISTS idx_turns_session ON interview_turns(session_id)",
+                    "CREATE INDEX IF NOT EXISTS idx_segments_session ON interview_segments(session_id)",
+                    "CREATE INDEX IF NOT EXISTS idx_question_candidate ON question_index(candidate_id)",
+                    "CREATE INDEX IF NOT EXISTS idx_memory_candidate ON candidate_memory_items(candidate_id)",
+                    "CREATE INDEX IF NOT EXISTS idx_reports_session ON reports(session_id)",
+                ):
+                    conn.execute(statement)
+                conn.commit()
+            _db_schema_ready = True
+            print("[DB] schema ready", flush=True)
+            return True
+        except Exception as exc:
+            print(f"[DB] schema init failed: {exc}", flush=True)
+            return False
+
+
+def stable_id(prefix: str, *parts: Any) -> str:
+    text = "|".join(str(part or "") for part in parts)
+    digest = hashlib.sha1(text.encode("utf-8", errors="ignore")).hexdigest()[:20]
+    return f"{prefix}-{digest}"
+
+
+def parse_epoch_datetime(value: Any) -> datetime | None:
+    if value in (None, "", 0):
+        return None
+    try:
+        timestamp = float(value)
+    except Exception:
+        return None
+    if timestamp > 10_000_000_000:
+        timestamp = timestamp / 1000
+    try:
+        return datetime.fromtimestamp(timestamp)
+    except Exception:
+        return None
+
+
+def read_resume_field(resume: dict, *keys: str) -> str:
+    for key in keys:
+        value = resume.get(key)
+        if value not in (None, "", []):
+            if isinstance(value, (list, dict)):
+                return json.dumps(value, ensure_ascii=False)[:500]
+            return str(value).strip()
+    raw = resume.get("raw_result") if isinstance(resume.get("raw_result"), dict) else {}
+    for key in keys:
+        value = raw.get(key)
+        if value not in (None, "", []):
+            if isinstance(value, (list, dict)):
+                return json.dumps(value, ensure_ascii=False)[:500]
+            return str(value).strip()
+    return ""
+
+
+def candidate_identity(snapshot: dict, assessment: dict | None = None) -> dict:
+    resume = snapshot.get("resume") if isinstance(snapshot.get("resume"), dict) else {}
+    assessment = assessment if isinstance(assessment, dict) else {}
+    name = read_resume_field(resume, "name") or str(assessment.get("candidate_name") or "").strip() or "候选人"
+    phone = read_resume_field(resume, "phone", "mobile", "telephone")
+    email = read_resume_field(resume, "email", "mail")
+    target_position = (
+        read_resume_field(resume, "expect_job", "work_position", "current_position")
+        or str(snapshot.get("jobTitle") or "").strip()
+        or "目标岗位"
+    )
+    identity_key = "|".join(item for item in (email.lower(), phone, name, target_position) if item) or str(snapshot.get("sessionId") or uuid.uuid4())
+    return {
+        "id": stable_id("candidate", identity_key),
+        "name": name,
+        "phone": phone,
+        "email": email,
+        "target_position": target_position,
+        "identity_key": identity_key,
+    }
+
+
+def normalize_turns(snapshot: dict, candidate_id: str) -> list[dict]:
+    turns = []
+    seen = set()
+    for index, item in enumerate(snapshot.get("finals") or [], start=1):
+        if not isinstance(item, dict):
+            continue
+        text = str(item.get("text") or "").strip()
+        if not text:
+            continue
+        turn_id = str(item.get("id") or item.get("sourceId") or f"turn-{index}")
+        if turn_id in seen:
+            turn_id = f"{turn_id}-{index}"
+        seen.add(turn_id)
+        turns.append(
+            {
+                "id": turn_id,
+                "candidate_id": candidate_id,
+                "speaker_id": str(item.get("rawSpeaker") or item.get("speakerId") or ""),
+                "speaker_role": str(item.get("speaker") or "unknown"),
+                "speaker_label": str(item.get("speakerLabel") or ""),
+                "text": text,
+                "is_final": not bool(item.get("pending")),
+                "turn_time": str(item.get("time") or ""),
+                "source_id": str(item.get("sourceId") or ""),
+                "raw_speaker": str(item.get("rawSpeaker") or ""),
+                "role_confidence": item.get("roleConfidence") or None,
+                "raw_json": item,
+            }
+        )
+    return turns
+
+
+def normalize_segments(snapshot: dict, candidate_id: str) -> list[dict]:
+    segments = []
+    seen = set()
+    interview_turns = snapshot.get("interviewTurns") if isinstance(snapshot.get("interviewTurns"), list) else []
+    for index, item in enumerate(interview_turns, start=1):
+        if not isinstance(item, dict):
+            continue
+        question = str(item.get("question") or "").strip()
+        answers = [
+            str(answer.get("text") or "").strip()
+            for answer in (item.get("answers") or [])
+            if isinstance(answer, dict) and str(answer.get("text") or "").strip()
+        ]
+        if not question and not answers:
+            continue
+        segment_id = str(item.get("id") or stable_id("segment", snapshot.get("sessionId"), index, question))
+        if segment_id in seen:
+            segment_id = f"{segment_id}-{index}"
+        seen.add(segment_id)
+        question_parts = item.get("questionParts") if isinstance(item.get("questionParts"), list) else []
+        source_ids = []
+        for raw_id in item.get("rawEntryIds") or []:
+            if raw_id:
+                source_ids.append(str(raw_id))
+        for part in question_parts:
+            if isinstance(part, dict):
+                for key in ("id", "sourceId"):
+                    if part.get(key):
+                        source_ids.append(str(part.get(key)))
+        for answer in item.get("answers") or []:
+            if isinstance(answer, dict):
+                for key in ("id", "sourceId"):
+                    if answer.get(key):
+                        source_ids.append(str(answer.get(key)))
+        source_ids = list(dict.fromkeys(source_ids))
+        segments.append(
+            {
+                "id": segment_id,
+                "candidate_id": candidate_id,
+                "question_text": question,
+                "answer_text": "\n".join(answers),
+                "question_started_at": str(item.get("time") or ""),
+                "question_ended_at": str(item.get("updatedAt") or ""),
+                "answer_started_at": str((item.get("answers") or [{}])[0].get("time") if item.get("answers") else ""),
+                "answer_ended_at": str((item.get("answers") or [{}])[-1].get("time") if item.get("answers") else ""),
+                "source_turn_ids": source_ids,
+                "confidence": 0.88 if question and answers else 0.62,
+                "needs_review": not bool(question and answers) or "未匹配" in question,
+                "raw_json": item,
+            }
+        )
+    if segments:
+        return segments
+
+    current = None
+    for turn in normalize_turns(snapshot, candidate_id):
+        if turn["speaker_role"] == "interviewer":
+            if current:
+                segments.append(current)
+            current = {
+                "id": stable_id("segment", snapshot.get("sessionId"), turn["id"]),
+                "candidate_id": candidate_id,
+                "question_text": turn["text"],
+                "answer_text": "",
+                "question_started_at": turn["turn_time"],
+                "question_ended_at": turn["turn_time"],
+                "answer_started_at": "",
+                "answer_ended_at": "",
+                "source_turn_ids": [turn["id"]],
+                "confidence": 0.7,
+                "needs_review": True,
+                "raw_json": {"fallback": True},
+            }
+        elif turn["speaker_role"] == "candidate":
+            if not current:
+                current = {
+                    "id": stable_id("segment", snapshot.get("sessionId"), "unmatched", turn["id"]),
+                    "candidate_id": candidate_id,
+                    "question_text": "未匹配到面试官题目",
+                    "answer_text": "",
+                    "question_started_at": "",
+                    "question_ended_at": "",
+                    "answer_started_at": turn["turn_time"],
+                    "answer_ended_at": turn["turn_time"],
+                    "source_turn_ids": [],
+                    "confidence": 0.45,
+                    "needs_review": True,
+                    "raw_json": {"fallback": True},
+                }
+            current["answer_text"] = "\n".join([current["answer_text"], turn["text"]]).strip()
+            current["answer_started_at"] = current["answer_started_at"] or turn["turn_time"]
+            current["answer_ended_at"] = turn["turn_time"]
+            current["source_turn_ids"].append(turn["id"])
+    if current:
+        segments.append(current)
+    return segments
+
+
+def build_next_round_context(snapshot: dict, assessment: dict, segments: list[dict]) -> dict:
+    asked_questions = [segment["question_text"] for segment in segments if segment.get("question_text")]
+    risks = assessment.get("risks") if isinstance(assessment.get("risks"), list) else []
+    follow_ups = assessment.get("follow_ups") if isinstance(assessment.get("follow_ups"), list) else []
+    strengths = assessment.get("strengths") if isinstance(assessment.get("strengths"), list) else []
+    return {
+        "candidate_brief": assessment.get("summary") or "",
+        "previous_round_summary": assessment.get("detailed_evaluation") or assessment.get("ai_conclusion") or "",
+        "asked_questions": asked_questions[-20:],
+        "avoid_questions": [f"不要重复泛问：{question}" for question in asked_questions[-10:]],
+        "recommended_focus": (risks + follow_ups)[:10],
+        "known_strengths": strengths[:8],
+        "opening_strategy": "直接围绕上一轮存疑点和未核验数据追问，不需要重复完整自我介绍。",
+    }
+
+
+def persist_interview_snapshot(snapshot: dict, report: dict) -> dict:
+    if not database_enabled():
+        return {"enabled": False, "status": "disabled"}
+    if not ensure_database_schema():
+        return {"enabled": True, "status": "failed", "error": "database schema unavailable"}
+
+    assessment = report.get("assessment") if isinstance(report.get("assessment"), dict) else {}
+    candidate = candidate_identity(snapshot, assessment)
+    candidate_id = candidate["id"]
+    session_id = str(snapshot.get("sessionId") or stable_id("session", time.time()))
+    resume = snapshot.get("resume") if isinstance(snapshot.get("resume"), dict) else {}
+    turns = normalize_turns(snapshot, candidate_id)
+    segments = normalize_segments(snapshot, candidate_id)
+    context = build_next_round_context(snapshot, assessment, segments)
+    now_status = str(snapshot.get("recordingStatus") or "finished")
+    try:
+        with db_connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO candidates (id, name, phone, email, target_position, identity_key)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                ON CONFLICT (id) DO UPDATE SET
+                    name = EXCLUDED.name,
+                    phone = EXCLUDED.phone,
+                    email = EXCLUDED.email,
+                    target_position = EXCLUDED.target_position,
+                    identity_key = EXCLUDED.identity_key,
+                    updated_at = now()
+                """,
+                (
+                    candidate_id,
+                    candidate["name"],
+                    candidate["phone"],
+                    candidate["email"],
+                    candidate["target_position"],
+                    candidate["identity_key"],
+                ),
+            )
+            if resume:
+                resume_id = stable_id("resume", candidate_id, resume.get("resume_file_path") or json.dumps(resume, ensure_ascii=False)[:1000])
+                conn.execute(
+                    """
+                    INSERT INTO resumes (id, candidate_id, file_name, file_path, parsed_json, parsed_text)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (id) DO UPDATE SET
+                        file_name = EXCLUDED.file_name,
+                        file_path = EXCLUDED.file_path,
+                        parsed_json = EXCLUDED.parsed_json,
+                        parsed_text = EXCLUDED.parsed_text,
+                        updated_at = now()
+                    """,
+                    (
+                        resume_id,
+                        candidate_id,
+                        str(resume.get("file_name") or resume.get("filename") or ""),
+                        str(resume.get("resume_file_path") or ""),
+                        db_json(resume),
+                        json.dumps(resume, ensure_ascii=False)[:12000],
+                    ),
+                )
+            conn.execute(
+                """
+                INSERT INTO interview_sessions (
+                    id, candidate_id, round_name, position_name, interviewer_name, status,
+                    started_at, ended_at, elapsed_time, demo_mode, audio_path, transcript_path,
+                    realtime_transcript_path, folder_path, snapshot_json
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (id) DO UPDATE SET
+                    candidate_id = EXCLUDED.candidate_id,
+                    position_name = EXCLUDED.position_name,
+                    interviewer_name = EXCLUDED.interviewer_name,
+                    status = EXCLUDED.status,
+                    ended_at = EXCLUDED.ended_at,
+                    elapsed_time = EXCLUDED.elapsed_time,
+                    demo_mode = EXCLUDED.demo_mode,
+                    audio_path = EXCLUDED.audio_path,
+                    transcript_path = EXCLUDED.transcript_path,
+                    realtime_transcript_path = EXCLUDED.realtime_transcript_path,
+                    folder_path = EXCLUDED.folder_path,
+                    snapshot_json = EXCLUDED.snapshot_json,
+                    updated_at = now()
+                """,
+                (
+                    session_id,
+                    candidate_id,
+                    str(snapshot.get("roundName") or "面试"),
+                    str(snapshot.get("jobTitle") or candidate["target_position"]),
+                    str(snapshot.get("interviewer") or ""),
+                    now_status,
+                    parse_epoch_datetime(snapshot.get("startedAt")),
+                    parse_epoch_datetime(snapshot.get("endedAt")),
+                    str(snapshot.get("elapsedTime") or ""),
+                    bool(snapshot.get("demoMode")),
+                    str(report.get("audio_path") or snapshot.get("audio_path") or ""),
+                    str(report.get("transcript_path") or snapshot.get("transcript_path") or ""),
+                    str(report.get("realtime_transcript_path") or snapshot.get("realtime_transcript_path") or ""),
+                    str(report.get("folder_path") or snapshot.get("interview_dir") or ""),
+                    db_json(snapshot),
+                ),
+            )
+            for sql in (
+                "DELETE FROM question_index WHERE session_id = %s",
+                """
+                DELETE FROM memory_embeddings
+                USING candidate_memory_items
+                WHERE memory_embeddings.memory_item_id = candidate_memory_items.id
+                  AND candidate_memory_items.session_id = %s
+                """,
+                "DELETE FROM candidate_memory_items WHERE session_id = %s",
+                "DELETE FROM ai_session_summaries WHERE session_id = %s",
+                "DELETE FROM interview_context_snapshots WHERE target_session_id = %s",
+                "DELETE FROM reports WHERE session_id = %s",
+                "DELETE FROM interview_segments WHERE session_id = %s",
+                "DELETE FROM interview_turns WHERE session_id = %s",
+            ):
+                conn.execute(sql, (session_id,))
+
+            for turn in turns:
+                conn.execute(
+                    """
+                    INSERT INTO interview_turns (
+                        id, session_id, candidate_id, speaker_id, speaker_role, speaker_label,
+                        text, is_final, turn_time, source_id, raw_speaker, role_confidence, raw_json
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        turn["id"],
+                        session_id,
+                        candidate_id,
+                        turn["speaker_id"],
+                        turn["speaker_role"],
+                        turn["speaker_label"],
+                        turn["text"],
+                        turn["is_final"],
+                        turn["turn_time"],
+                        turn["source_id"],
+                        turn["raw_speaker"],
+                        turn["role_confidence"],
+                        db_json(turn["raw_json"]),
+                    ),
+                )
+
+            for segment in segments:
+                conn.execute(
+                    """
+                    INSERT INTO interview_segments (
+                        id, session_id, candidate_id, question_text, answer_text,
+                        question_started_at, question_ended_at, answer_started_at,
+                        answer_ended_at, source_turn_ids, confidence, needs_review, raw_json
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        segment["id"],
+                        session_id,
+                        candidate_id,
+                        segment["question_text"],
+                        segment["answer_text"],
+                        segment["question_started_at"],
+                        segment["question_ended_at"],
+                        segment["answer_started_at"],
+                        segment["answer_ended_at"],
+                        segment["source_turn_ids"],
+                        segment["confidence"],
+                        segment["needs_review"],
+                        db_json(segment["raw_json"]),
+                    ),
+                )
+                if segment.get("question_text") and "未匹配" not in segment["question_text"]:
+                    conn.execute(
+                        """
+                        INSERT INTO question_index (id, candidate_id, session_id, segment_id, question_text, topic_tags)
+                        VALUES (%s, %s, %s, %s, %s, %s)
+                        """,
+                        (
+                            stable_id("question", session_id, segment["id"], segment["question_text"]),
+                            candidate_id,
+                            session_id,
+                            segment["id"],
+                            segment["question_text"],
+                            db_json([]),
+                        ),
+                    )
+
+            summary_id = stable_id("summary", session_id)
+            conn.execute(
+                """
+                INSERT INTO ai_session_summaries (
+                    id, session_id, candidate_id, summary_json, strengths_json,
+                    risks_json, doubt_points_json, next_questions_json
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    summary_id,
+                    session_id,
+                    candidate_id,
+                    db_json(assessment),
+                    db_json(assessment.get("strengths") or []),
+                    db_json(assessment.get("risks") or []),
+                    db_json([d for item in snapshot.get("analyses") or [] for d in (item.get("doubts") or [])] if isinstance(snapshot.get("analyses"), list) else []),
+                    db_json(assessment.get("follow_ups") or []),
+                ),
+            )
+
+            memory_entries = []
+            for memory_type, values in (
+                ("strength", assessment.get("strengths") or []),
+                ("risk", assessment.get("risks") or []),
+                ("follow_up", assessment.get("follow_ups") or []),
+                ("evidence", assessment.get("evidence_summary") or []),
+            ):
+                for value in values[:10]:
+                    content = str(value or "").strip()
+                    if content:
+                        memory_entries.append((memory_type, content))
+            for index, (memory_type, content) in enumerate(memory_entries, start=1):
+                conn.execute(
+                    """
+                    INSERT INTO candidate_memory_items (
+                        id, candidate_id, session_id, memory_type, content, source_segment_id, confidence
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        stable_id("memory", session_id, memory_type, index, content),
+                        candidate_id,
+                        session_id,
+                        memory_type,
+                        content,
+                        "",
+                        0.82,
+                    ),
+                )
+
+            conn.execute(
+                """
+                INSERT INTO interview_context_snapshots (
+                    id, candidate_id, target_session_id, source_session_ids, context_type,
+                    context_json, prompt_text, model_name, status
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    stable_id("context", session_id, "next_round"),
+                    candidate_id,
+                    session_id,
+                    db_json([session_id]),
+                    "next_round_briefing",
+                    db_json(context),
+                    json.dumps(context, ensure_ascii=False),
+                    os.getenv("DEEPSEEK_MODEL", "deepseek-chat"),
+                    "ready",
+                ),
+            )
+
+            report_id = stable_id("report", session_id, report.get("pdf_path") or time.time())
+            conn.execute(
+                """
+                INSERT INTO reports (id, candidate_id, session_id, report_type, file_path, report_json)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    report_id,
+                    candidate_id,
+                    session_id,
+                    str(snapshot.get("reportType") or "final"),
+                    str(report.get("pdf_path") or ""),
+                    db_json(report),
+                ),
+            )
+            conn.commit()
+        return {
+            "enabled": True,
+            "status": "saved",
+            "candidate_id": candidate_id,
+            "session_id": session_id,
+            "turns": len(turns),
+            "segments": len(segments),
+            "context_snapshot": "ready",
+        }
+    except Exception as exc:
+        print(f"[DB] persist failed: {exc}", flush=True)
+        return {"enabled": True, "status": "failed", "error": str(exc)}
+
+
+def persist_interviewer_evaluation(payload: dict) -> dict:
+    if not database_enabled():
+        return {"enabled": False, "status": "disabled"}
+    if not ensure_database_schema():
+        return {"enabled": True, "status": "failed", "error": "database schema unavailable"}
+    snapshot = payload.get("snapshot") if isinstance(payload.get("snapshot"), dict) else payload
+    evaluation = payload.get("evaluation") if isinstance(payload.get("evaluation"), dict) else {}
+    assessment = payload.get("assessment") if isinstance(payload.get("assessment"), dict) else {}
+    candidate = candidate_identity(snapshot, assessment)
+    candidate_id = candidate["id"]
+    session_id = str(payload.get("sessionId") or snapshot.get("sessionId") or stable_id("session", time.time()))
+    scores = evaluation.get("scores") if isinstance(evaluation.get("scores"), list) else []
+    clean_scores = [
+        item for item in scores
+        if isinstance(item, dict) and str(item.get("key") or item.get("dimension_key") or "").strip()
+    ]
+    average = 0
+    if clean_scores:
+        average = round(sum(float(item.get("score") or 0) for item in clean_scores) / len(clean_scores), 2)
+    evaluation_id = str(evaluation.get("id") or stable_id("evaluation", session_id, str(snapshot.get("interviewer") or "")))
+    try:
+        with db_connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO candidates (id, name, phone, email, target_position, identity_key)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                ON CONFLICT (id) DO UPDATE SET
+                    name = EXCLUDED.name,
+                    phone = EXCLUDED.phone,
+                    email = EXCLUDED.email,
+                    target_position = EXCLUDED.target_position,
+                    identity_key = EXCLUDED.identity_key,
+                    updated_at = now()
+                """,
+                (
+                    candidate_id,
+                    candidate["name"],
+                    candidate["phone"],
+                    candidate["email"],
+                    candidate["target_position"],
+                    candidate["identity_key"],
+                ),
+            )
+            conn.execute(
+                """
+                INSERT INTO interview_sessions (
+                    id, candidate_id, round_name, position_name, interviewer_name, status,
+                    started_at, ended_at, elapsed_time, demo_mode, snapshot_json
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (id) DO UPDATE SET
+                    candidate_id = EXCLUDED.candidate_id,
+                    interviewer_name = EXCLUDED.interviewer_name,
+                    status = EXCLUDED.status,
+                    snapshot_json = COALESCE(NULLIF(EXCLUDED.snapshot_json, '{}'::jsonb), interview_sessions.snapshot_json),
+                    updated_at = now()
+                """,
+                (
+                    session_id,
+                    candidate_id,
+                    str(snapshot.get("roundName") or "面试"),
+                    str(snapshot.get("jobTitle") or candidate["target_position"]),
+                    str(snapshot.get("interviewer") or payload.get("interviewer") or ""),
+                    "evaluated",
+                    parse_epoch_datetime(snapshot.get("startedAt")),
+                    parse_epoch_datetime(snapshot.get("endedAt")),
+                    str(snapshot.get("elapsedTime") or ""),
+                    bool(snapshot.get("demoMode")),
+                    db_json(snapshot if snapshot else {}),
+                ),
+            )
+            conn.execute(
+                """
+                INSERT INTO interviewer_evaluations (
+                    id, session_id, candidate_id, interviewer_name, overall_recommendation,
+                    overall_comment, average_score
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (id) DO UPDATE SET
+                    overall_recommendation = EXCLUDED.overall_recommendation,
+                    overall_comment = EXCLUDED.overall_comment,
+                    average_score = EXCLUDED.average_score,
+                    updated_at = now()
+                """,
+                (
+                    evaluation_id,
+                    session_id,
+                    candidate_id,
+                    str(snapshot.get("interviewer") or payload.get("interviewer") or ""),
+                    str(evaluation.get("recommendation") or ""),
+                    str(evaluation.get("comment") or ""),
+                    average,
+                ),
+            )
+            conn.execute("DELETE FROM evaluation_scores WHERE evaluation_id = %s", (evaluation_id,))
+            for index, item in enumerate(clean_scores, start=1):
+                conn.execute(
+                    """
+                    INSERT INTO evaluation_scores (
+                        id, evaluation_id, dimension_key, dimension_name, score,
+                        ai_suggested_score, interviewer_note, evidence_turn_ids
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        stable_id("score", evaluation_id, index, item.get("key") or item.get("dimension_key")),
+                        evaluation_id,
+                        str(item.get("key") or item.get("dimension_key") or ""),
+                        str(item.get("label") or item.get("dimension_name") or ""),
+                        float(item.get("score") or 0),
+                        item.get("aiSuggestedScore") or item.get("ai_suggested_score") or None,
+                        str(item.get("note") or item.get("interviewer_note") or ""),
+                        db_json(item.get("evidenceTurnIds") or item.get("evidence_turn_ids") or []),
+                    ),
+                )
+            conn.commit()
+        return {
+            "enabled": True,
+            "status": "saved",
+            "evaluation_id": evaluation_id,
+            "candidate_id": candidate_id,
+            "session_id": session_id,
+            "average_score": average,
+        }
+    except Exception as exc:
+        print(f"[DB] evaluation save failed: {exc}", flush=True)
+        return {"enabled": True, "status": "failed", "error": str(exc)}
+
 
 def compact_resume_text(value: Any, limit: int = 600) -> str:
     text = re.sub(r"\s+", " ", str(value or "")).strip()
@@ -3659,6 +4564,21 @@ def make_http_handler(session: DoubaoSession):
                         "need_vad": os.getenv("TENCENT_NEED_VAD", "1"),
                         "vad_silence_time": os.getenv("TENCENT_VAD_SILENCE_TIME", ""),
                         "speaker_diarization": os.getenv("TENCENT_SPEAKER_DIARIZATION", "1"),
+                        "database_enabled": database_enabled(),
+                        "database_url_loaded": bool(os.getenv("DATABASE_URL")),
+                        "pgvector_enabled": pgvector_enabled(),
+                        "database_schema_ready": _db_schema_ready,
+                    },
+                )
+            elif request_path == "/api/db/status":
+                schema_ready = ensure_database_schema() if database_enabled() else False
+                self.send_json(
+                    HTTPStatus.OK,
+                    {
+                        "enabled": database_enabled(),
+                        "database_url_loaded": bool(os.getenv("DATABASE_URL")),
+                        "pgvector_enabled": pgvector_enabled(),
+                        "schema_ready": schema_ready,
                     },
                 )
             elif request_path == "/api/wecom/recipients":
@@ -3819,10 +4739,20 @@ def make_http_handler(session: DoubaoSession):
                         if calibrated is None and session.audio_path:
                             calibrated = session.speaker_diarization_placeholder("speaker diarization queued in background")
                     result = create_final_report(payload, calibrated=calibrated)
+                    result["database"] = persist_interview_snapshot(payload, result)
                     self.send_json(HTTPStatus.OK, {"status": "success", **result})
                 except Exception as exc:
                     import traceback
                     traceback.print_exc()
+                    self.send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": str(exc)})
+            elif request_path == "/api/evaluation":
+                length = int(self.headers.get("Content-Length", "0") or "0")
+                try:
+                    payload = json.loads(self.rfile.read(length).decode("utf-8") or "{}")
+                    result = persist_interviewer_evaluation(payload)
+                    status = HTTPStatus.OK if result.get("status") in ("saved", "disabled") else HTTPStatus.BAD_GATEWAY
+                    self.send_json(status, {"status": "success" if result.get("status") == "saved" else result.get("status"), "database": result})
+                except Exception as exc:
                     self.send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": str(exc)})
             elif request_path == "/api/wecom/send-report":
                 length = int(self.headers.get("Content-Length", "0") or "0")
@@ -3991,6 +4921,7 @@ def main():
     ws_server = WsServer(args.host, args.ws_port, None)
     session = DoubaoSession(args.resource_id, args.end_window_size, ws_server)
     ws_server.session = session
+    ensure_database_schema()
     ws_server.start()
 
     server = ThreadingHTTPServer((args.host, args.http_port), make_http_handler(session))
