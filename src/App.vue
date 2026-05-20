@@ -61,12 +61,13 @@
           @resume-cleared="handleResumeCleared"
           @view-resume="resumeViewerOpen = true"
         />
+        <span class="context-badge" :class="resumeModeClass">{{ resumeContextLabel }}</span>
         <span>面试官：李明</span>
         <strong>{{ elapsedTime }}</strong>
         <button
           type="button"
           class="test-button"
-          :disabled="finishingInterview || recordingStatus === 'finalizing' || (!testModeRunning && recordingStatus === 'recording')"
+          :disabled="!interviewSetupReady || finishingInterview || recordingStatus === 'finalizing' || (!testModeRunning && recordingStatus === 'recording')"
           @click="toggleDemoInterview"
         >
           {{ demoButtonText }}
@@ -109,6 +110,31 @@
       :resume="loadedResume"
       @close="resumeViewerOpen = false"
     />
+
+    <section v-if="resumeGateVisible" class="resume-gate-backdrop" aria-live="polite">
+      <div class="resume-gate-card">
+        <div class="resume-gate-head">
+          <span>面试上下文</span>
+          <h2>先导入简历，或选择无简历模式</h2>
+          <p>导入后，面试问题、存疑点和报告会优先围绕候选人的简历经历展开。</p>
+        </div>
+
+        <div class="resume-gate-actions">
+          <ResumeUpload
+            :key="`gate-${sessionId}`"
+            :resume="loadedResume"
+            @resume-loaded="handleResumeLoaded"
+            @resume-cleared="handleResumeCleared"
+            @view-resume="resumeViewerOpen = true"
+          />
+          <button type="button" class="secondary-button no-resume-button" @click="useNoResumeMode">
+            无简历模式
+          </button>
+        </div>
+
+        <p class="resume-gate-note">无简历模式会只依据现场问答转写评估，不引用历史简历信息。</p>
+      </div>
+    </section>
 
     <section v-if="completedReport" class="report-complete-backdrop" aria-live="polite">
       <div class="report-complete-card">
@@ -214,6 +240,7 @@ const sessionId = ref(`interview-${Date.now()}`)
 const finishingInterview = ref(false)
 let clockTimer = null
 let loadedResume = ref(null)
+const resumeMode = ref('pending')
 const resumeViewerOpen = ref(false)
 const hasStartedInterview = ref(false)
 const testModeRunning = ref(false)
@@ -272,19 +299,36 @@ const canFinishInterview = computed(() => {
   return hasStartedInterview.value && ['idle', 'recording', 'stopped'].includes(recordingStatus.value)
 })
 const sessionSubtitle = computed(() => {
+  if (!interviewSetupReady.value) return '等待简历'
   if (recordingStatus.value === 'recording') return '实时面试中'
   if (recordingStatus.value === 'finalizing') return '报告生成中'
   return '等待开始'
 })
 const displayJobTitle = computed(() => {
   const profile = buildResumeProfile(loadedResume.value)
-  return profile.hasResume
-    ? profile.targetRole || profile.position || '目标岗位'
-    : '运营专员（平台运营方向）'
+  if (profile.hasResume) {
+    return profile.targetRole || profile.position || '目标岗位'
+  }
+  return resumeMode.value === 'no_resume'
+    ? '运营专员（平台运营方向）'
+    : '待导入简历'
 })
+const interviewSetupReady = computed(() => Boolean(loadedResume.value) || resumeMode.value === 'no_resume' || hasStartedInterview.value)
+const resumeGateVisible = computed(() => !interviewSetupReady.value && !completedReport.value)
+const resumeContextLabel = computed(() => {
+  if (loadedResume.value) return '简历模式'
+  if (resumeMode.value === 'no_resume') return '无简历模式'
+  return '待导入简历'
+})
+const resumeModeClass = computed(() => ({
+  imported: Boolean(loadedResume.value),
+  empty: resumeMode.value === 'no_resume',
+  pending: !loadedResume.value && resumeMode.value !== 'no_resume'
+}))
 const demoButtonText = computed(() => testModeRunning.value ? '停止演示' : '演示测试')
-const topRecordButtonDisabled = computed(() => ['recording', 'finalizing', 'finished'].includes(recordingStatus.value))
+const topRecordButtonDisabled = computed(() => !interviewSetupReady.value || ['recording', 'finalizing', 'finished'].includes(recordingStatus.value))
 const topRecordButtonText = computed(() => {
+  if (!interviewSetupReady.value) return '先导入简历'
   if (recordingStatus.value === 'recording') return '全程录音中'
   if (recordingStatus.value === 'finalizing') return '生成报告中'
   if (recordingStatus.value === 'finished') return '面试已结束'
@@ -338,13 +382,25 @@ const asrMode = ref('fast')
 
 function handleResumeLoaded(resume) {
   loadedResume.value = resume
+  resumeMode.value = 'resume'
   resumeViewerOpen.value = true
+  persistSession()
 }
 
 async function handleResumeCleared() {
   loadedResume.value = null
+  resumeMode.value = hasStartedInterview.value ? 'no_resume' : 'pending'
   resumeViewerOpen.value = false
   await fetch(appPath('/api/resume'), { method: 'DELETE' }).catch(() => {})
+  persistSession()
+}
+
+async function useNoResumeMode() {
+  loadedResume.value = null
+  resumeMode.value = 'no_resume'
+  resumeViewerOpen.value = false
+  await fetch(appPath('/api/resume'), { method: 'DELETE' }).catch(() => {})
+  persistSession()
 }
 
 async function setMode(mode) {
@@ -372,7 +428,7 @@ onBeforeUnmount(() => {
 })
 
 watch(
-  [finals, messages, analyses, interviewerQuestions, interviewTurns, loadedResume, recordingStatus],
+  [finals, messages, analyses, interviewerQuestions, interviewTurns, loadedResume, resumeMode, recordingStatus],
   () => persistSession(),
   { deep: true }
 )
@@ -387,6 +443,10 @@ async function toggleRecording() {
 
 async function startRecording() {
   if (recordingStatus.value === 'finalizing' || recordingStatus.value === 'finished') return
+  if (!interviewSetupReady.value) {
+    asrStatus.value = '请先导入简历或选择无简历模式'
+    return
+  }
   clearReportProgress()
   stopDemoInterview()
   currentSessionDemo.value = false
@@ -489,6 +549,7 @@ function resetInterview() {
   startedAt.value = Date.now()
   now.value = Date.now()
   loadedResume.value = null
+  resumeMode.value = 'pending'
   resumeViewerOpen.value = false
   resetAsrState()
   hasStartedInterview.value = false
@@ -748,6 +809,7 @@ function toggleDemoInterview() {
 
 function startDemoInterview() {
   if (recordingStatus.value === 'recording' || recordingStatus.value === 'finalizing' || finishingInterview.value) return
+  if (!interviewSetupReady.value) return
   stopDemoInterview()
   resetAsrState()
   sessionId.value = `demo-${Date.now()}`
@@ -858,6 +920,7 @@ function buildInstantDemoSession(resume = loadedResume.value, options = {}) {
     demoMode: true,
     fullDemoReport: true,
     demoTurns: turns.length,
+    resumeMode: profile.hasResume ? 'resume' : resumeMode.value,
     resume,
     finals: demoFinals.map(normalizeTranscriptEntry),
     messages: demoMessages,
@@ -887,6 +950,8 @@ function loadDemoSessionToUi(demoSession) {
   sessionId.value = snapshot.sessionId
   startedAt.value = snapshot.startedAt
   now.value = snapshot.endedAt
+  loadedResume.value = snapshot.resume || loadedResume.value
+  resumeMode.value = loadedResume.value ? 'resume' : snapshot.resumeMode || 'no_resume'
   currentSessionDemo.value = true
   hasStartedInterview.value = true
   recordingStatus.value = 'stopped'
@@ -1355,6 +1420,7 @@ function buildSessionSnapshot(extra = {}) {
     endedAtText: formatDateTime(endedAt),
     elapsedTime: elapsedTime.value,
     demoMode: currentSessionDemo.value,
+    resumeMode: loadedResume.value ? 'resume' : resumeMode.value,
     resume: loadedResume.value,
     finals: finals.value.map(normalizeTranscriptEntry),
     messages: messages.value,
@@ -1390,6 +1456,9 @@ function restoreSavedSession() {
     interviewerQuestions.value = Array.isArray(saved.interviewerQuestions) ? saved.interviewerQuestions : []
     interviewTurns.value = Array.isArray(saved.interviewTurns) ? saved.interviewTurns : []
     hasStartedInterview.value = finals.value.length > 0 || messages.value.length > 0
+    resumeMode.value = loadedResume.value
+      ? 'resume'
+      : saved.resumeMode || (hasStartedInterview.value ? 'no_resume' : 'pending')
     if (hasStartedInterview.value) {
       const restoredStatus = saved.recordingStatus || 'stopped'
       recordingStatus.value = ['recording', 'finalizing'].includes(restoredStatus) ? 'stopped' : restoredStatus
