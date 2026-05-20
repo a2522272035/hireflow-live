@@ -17,6 +17,12 @@ ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
+RUN sed -i \
+    -e 's|http://deb.debian.org/debian-security|http://mirrors.aliyun.com/debian-security|g' \
+    -e 's|http://security.debian.org/debian-security|http://mirrors.aliyun.com/debian-security|g' \
+    -e 's|http://deb.debian.org/debian|http://mirrors.aliyun.com/debian|g' \
+    /etc/apt/sources.list.d/debian.sources
+
 RUN apt-get update \
     && apt-get install -y --no-install-recommends fonts-wqy-microhei fonts-noto-cjk fontconfig \
     && rm -rf /var/lib/apt/lists/*
