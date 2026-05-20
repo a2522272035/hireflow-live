@@ -2432,17 +2432,20 @@ def ensure_pdf_fonts():
         r"C:\Windows\Fonts\simhei.ttf",
         r"C:\Windows\Fonts\msyh.ttc",
         r"C:\Windows\Fonts\simsun.ttc",
-        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.otf",
-        "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
         "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
         "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
         "/usr/share/fonts/truetype/arphic/ukai.ttc",
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.otf",
+        "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
     ]
     for font_path in font_candidates:
         if os.path.exists(font_path):
-            pdfmetrics.registerFont(TTFont("HireFlowCN", font_path))
-            return "HireFlowCN"
+            try:
+                pdfmetrics.registerFont(TTFont("HireFlowCN", font_path))
+                return "HireFlowCN"
+            except Exception as exc:
+                print(f"[PDF] skip unsupported font {font_path}: {exc}", flush=True)
     return "Helvetica"
 
 
