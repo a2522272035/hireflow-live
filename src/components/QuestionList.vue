@@ -6,7 +6,7 @@
       <small v-else>{{ questions.length }} 条</small>
     </div>
 
-    <div v-if="questions.length" class="question-timeline">
+    <div v-if="questions.length" ref="questionTimelineRef" class="question-timeline">
       <article
         v-for="question in questions"
         :key="question.id"
@@ -21,7 +21,9 @@
 </template>
 
 <script setup>
-defineProps({
+import { nextTick, ref, watch } from 'vue'
+
+const props = defineProps({
   questions: {
     type: Array,
     default: () => []
@@ -31,6 +33,29 @@ defineProps({
     default: false
   }
 })
+
+const questionTimelineRef = ref(null)
+
+function scrollQuestionsToBottom() {
+  const el = questionTimelineRef.value
+  if (!el) return
+
+  if (typeof el.scrollTo === 'function') {
+    el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
+    return
+  }
+
+  el.scrollTop = el.scrollHeight
+}
+
+watch(
+  () => props.questions.map((item) => `${item.id ?? ''}:${item.time ?? ''}:${item.text ?? ''}`).join('|'),
+  async () => {
+    await nextTick()
+    scrollQuestionsToBottom()
+  },
+  { flush: 'post', immediate: true }
+)
 
 </script>
 
