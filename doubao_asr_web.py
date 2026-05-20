@@ -1697,6 +1697,33 @@ def resume_work_items(resume: dict) -> list[dict]:
     return []
 
 
+def resume_has_substance(resume: dict) -> bool:
+    """Return true only when resume data is rich enough to affect scoring."""
+    if not isinstance(resume, dict) or not resume:
+        return False
+    scalar_keys = (
+        "name", "work_year_norm", "work_year", "expect_job", "expected_job",
+        "work_position", "current_position", "position", "work_company",
+        "current_company", "degree", "college", "school", "major",
+    )
+    scalar_hits = sum(1 for key in scalar_keys if str(resume.get(key) or "").strip())
+    skills = resume.get("skills") if isinstance(resume.get("skills"), list) else []
+    certificates = resume.get("certificates") if isinstance(resume.get("certificates"), list) else []
+    works = resume_work_items(resume)
+    summary_text = " ".join(
+        str(resume.get(key) or "").strip()
+        for key in ("summary", "raw_text", "parsed_text")
+        if str(resume.get(key) or "").strip()
+    )
+    return bool(
+        scalar_hits >= 3
+        or works
+        or len(skills) >= 3
+        or certificates
+        or len(summary_text) >= 120
+    )
+
+
 def build_resume_key_points(resume: dict, target_role: str = "") -> list[str]:
     if not isinstance(resume, dict) or not resume:
         return []
@@ -1843,6 +1870,7 @@ def fallback_final_assessment(snapshot: dict) -> dict:
     resume = snapshot.get("resume") if isinstance(snapshot.get("resume"), dict) else {}
     experiences = resume.get("experiences") if isinstance(resume.get("experiences"), list) else []
     skills = resume.get("skills") if isinstance(resume.get("skills"), list) else []
+    resume_available = resume_has_substance(resume)
     candidate_name = str(resume.get("name") or "候选人").strip()
     target_role = str(
         resume.get("expect_job")
@@ -1888,21 +1916,11 @@ def fallback_final_assessment(snapshot: dict) -> dict:
     base -= min(doubt_count * 2, 18)
     if len(transcript_text) >= 220:
         base += 5
-    if resume:
-        base += 3
-    if skills:
-        base += min(len(skills), 10) // 3
-    if experiences:
-        base += min(len(experiences), 3)
     if not transcript_text:
         base = 45
     if is_demo_mode and transcript_text:
         demo_base = 82
         demo_base += min(correct_count, 5)
-        demo_base += 2 if resume else 0
-        demo_base += 2 if work_year_number >= 5 else 0
-        demo_base += 1 if len(skills) >= 5 else 0
-        demo_base += 1 if experiences else 0
         demo_base -= min(risk_count * 3 + max(doubt_count - 8, 0), 6)
         total_score = max(80, min(89, clamp_score(demo_base)))
     else:
@@ -1916,13 +1934,13 @@ def fallback_final_assessment(snapshot: dict) -> dict:
         "数据意识": total_score + (4 if re.search(r"\d|%|百分|数据|指标|转化|留存|增长", transcript_text) else -8),
         "风险控制": total_score - min(risk_count * 10 + doubt_count, 24),
     }
-    if resume:
+    if resume_available:
         dimension_seed["岗位匹配度"] += 5
         dimension_seed["经验真实性"] += 3 if experiences else 0
     if is_demo_mode and transcript_text:
         has_data_signal = bool(re.search(r"\d|%|百分|数据|指标|复核|准确|流程|交付", transcript_text))
         dimension_seed = {
-            "岗位匹配度": total_score + (4 if resume else 1),
+            "岗位匹配度": total_score + (4 if resume_available else 1),
             "表达清晰度": total_score + (2 if len(transcript_text) >= 220 else -2),
             "逻辑结构": total_score - 2,
             "经验真实性": total_score - (4 if doubt_count else 1),
@@ -1964,8 +1982,13 @@ def fallback_final_assessment(snapshot: dict) -> dict:
 
     if not transcript_text:
         risks.append("面试转写内容不足，报告仅能作为初筛参考。")
+    resume_evidence = (
+        f"简历关键点：{len(key_points)} 条"
+        if resume_available
+        else "简历未上传或内容较少：不作为扣分项，本次主要依据面试发言评估"
+    )
     evidence_summary = [
-        f"简历关键点：{len(key_points)} 条",
+        resume_evidence,
         f"候选人有效发言：{candidate_utterance_count} 段",
         f"面试官问题/追问：{interviewer_question_count} 段",
         f"阶段 AI 分析：{len(analyses)} 条",
@@ -1977,18 +2000,26 @@ def fallback_final_assessment(snapshot: dict) -> dict:
     )
 
     return {
-        "summary": f"{candidate_name}围绕{target_role}完成了面试，系统已结合简历关键画像、面试转写与阶段性分析生成综合评价。",
+        "summary": (
+            f"{candidate_name}围绕{target_role}完成了面试，系统主要依据候选人发言的逻辑性、内容自洽性、回答完整度"
+            f"{'，并结合简历关键画像' if resume_available else ''}生成综合评价。"
+        ),
         "detailed_evaluation": (
-            f"{candidate_name}的简历背景显示其目标/当前方向为{target_role}。"
-            f"{'工作年限约为' + work_year + '，' if work_year else ''}"
-            f"{'最近经历与' + current_company + '有关。' if current_company else ''}"
-            "当前评价主要依据简历结构、问答中的回答完整度、实时分析记录和存疑点数量自动汇总。"
-            "建议结合候选人项目细节和背调结果复核。"
+            (
+                f"{candidate_name}的简历背景显示其目标/当前方向为{target_role}。"
+                if resume_available
+                else f"{candidate_name}本轮简历信息较少，当前不因简历缺失扣分，重点评估其现场回答。"
+            )
+            + f"{'工作年限约为' + work_year + '，' if work_year else ''}"
+            + f"{'最近经历与' + current_company + '有关。' if current_company else ''}"
+            + "当前评价主要依据问答中的回答完整度、逻辑结构、内容自洽性、实时分析记录和存疑点数量自动汇总。"
+            + "建议结合候选人项目细节和背调结果复核。"
         ),
         "ai_conclusion": (
-            f"AI 结论：结合招聘要求（{job_requirements}）、简历关键背景和面试转写表现，"
+            f"AI 结论：结合招聘要求（{job_requirements}）和面试转写表现"
+            f"{'、简历关键背景' if resume_available else ''}，"
             f"当前给出“{hiring_grade(total_score)}”判断。候选人与岗位方向存在一定匹配度，"
-            "但仍需围绕关键经历真实性、个人贡献边界和数据口径做人工复核。"
+            "但仍需围绕回答内容真实性、个人贡献边界和数据口径做人工复核。"
         ),
         "recommendation": "建议进入下一轮人工复核，重点核验简历中关键项目、数据口径和个人贡献边界。",
         "total_score": total_score,
@@ -2206,6 +2237,7 @@ def generate_final_assessment(snapshot: dict) -> dict:
     finals = snapshot.get("finals") or []
     analyses = snapshot.get("analyses") or []
     resume = snapshot.get("resume") or {}
+    resume_available = resume_has_substance(resume)
     transcript = "\n".join(
         f"{item.get('time', '')} {item.get('speakerLabel') or ('面试官' if item.get('speaker') == 'interviewer' else '候选人')}：{item.get('text', '')}"
         for item in finals
@@ -2235,6 +2267,7 @@ def generate_final_assessment(snapshot: dict) -> dict:
 你是面试报告汇总专家。当前项目在面试过程中已经持续调用 AI 做了片段分析，你的任务是把这些既有 AI 分析记录汇总成最终报告，不要从全程转写重新逐句评价。
 优先依据 analysis_records 中的阶段性评价、存疑点和追问建议；简历只提炼主要信息，不要复述完整简历；招聘要求/岗位信息用于判断匹配度；transcript 只用于补充上下文和校验角色，不作为重新分析全文的主材料。
 如果既有分析记录证据不足，请写“待核验”，不要臆造结论。面试官发言只作为问题背景，不计入候选人能力评分。
+如果未上传简历、简历内容很少或岗位本身不依赖复杂简历，不要因此显著降低 total_score；此时重点根据候选人发言的逻辑性、回答完整度、内容是否自洽、与面试问题的相关性评分。简历缺失只能作为“信息置信度/待核验”说明，不能作为主要扣分项。
 必须只返回 JSON，不要 Markdown。评分维度必须正好包含以下 6 项：{", ".join(REPORT_DIMENSIONS)}。结论必须明确基于“招聘要求、简历、面试录音/转写”三类信息。
 JSON 格式：
 {{
@@ -2260,6 +2293,7 @@ JSON 格式：
     else:
         system_prompt = f"""
 你是严谨的面试评估专家。请根据候选人简历、招聘要求/岗位信息和全程转写，生成最终面试报告评分。简历只提炼主要信息，不要复述完整简历。
+如果未上传简历、简历内容很少或岗位本身不依赖复杂简历，不要因此显著降低 total_score；此时重点根据候选人发言的逻辑性、回答完整度、内容是否自洽、与面试问题的相关性评分。简历缺失只能作为“信息置信度/待核验”说明，不能作为主要扣分项。
 必须只返回 JSON，不要 Markdown。评分维度必须正好包含以下 6 项：{", ".join(REPORT_DIMENSIONS)}。结论必须明确基于“招聘要求、简历、面试录音/转写”三类信息。
 JSON 格式：
 {{
@@ -2287,6 +2321,8 @@ JSON 格式：
         "jobRequirements": snapshot.get("jobRequirements") or snapshot.get("jobTitle"),
         "interviewer": snapshot.get("interviewer"),
         "resume": resume,
+        "resume_available_for_scoring": resume_available,
+        "scoring_policy": "简历未上传或内容较少时，不因简历缺失显著扣分；主要评价候选人发言的逻辑性、内容自洽、回答完整度和岗位问题相关性。",
         "summary_mode": "aggregate_existing_ai_analysis" if has_analysis_records else "assess_from_transcript",
         "transcript": compact_text(transcript, 2500 if has_analysis_records else 7000),
         "instruction": (
@@ -2552,7 +2588,7 @@ def build_pdf_report(snapshot: dict, assessment: dict, pdf_path: Path) -> None:
     def add_resume_section():
         story.append(paragraph("简历关键画像", heading))
         if not resume:
-            story.append(paragraph("未上传简历。", small))
+            story.append(paragraph("未上传简历。本报告不因简历缺失直接扣分，主要依据面试发言评估。", small))
             return
 
         basic_items = [
@@ -2674,6 +2710,7 @@ def build_pdf_report(snapshot: dict, assessment: dict, pdf_path: Path) -> None:
             paragraph(f"{match_score}%", ParagraphStyle("MatchScoreCN", parent=title, fontSize=22, textColor=colors.HexColor("#2563eb"))),
             paragraph(
                 "匹配度由简历关键画像、目标岗位/招聘要求、候选人问答内容和阶段 AI 分析共同推导。"
+                "如简历未上传或内容较少，则主要依据候选人问答内容、逻辑性和自洽性推导。"
                 "该分值只作为面试复核参考，不替代人工判断。",
                 normal,
             ),
